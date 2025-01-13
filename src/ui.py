@@ -26,7 +26,6 @@ import os
 # import xarray as xr
 from pathlib import Path
 from matplotlib import pyplot as plt
-import nd2
 import pandas as pd
 import numpy as np
 import cv2
@@ -39,6 +38,8 @@ from segmentation import SegmentationModels, segment_all_images, segment_this_im
 from image_functions import remove_stage_jitter_MAE
 from PySide6.QtCore import QThread, Signal, QObject
 
+from image_data import ImageData
+
 # import pims
 from matplotlib.backends.backend_qt5agg import FigureCanvas
 
@@ -50,13 +51,12 @@ from population import get_fluorescence_all_experiments, get_fluorescence_single
 Can hold either an ND2 file or a series of images
 """
 
-
-class ImageData:
-    def __init__(self, data, is_nd2=False):
-        self.data = data
-        self.processed_images = []
-        self.is_nd2 = is_nd2
-        self.segmentation_cache = {} 
+# class ImageData:
+#     def __init__(self, data, is_nd2=False):
+#         self.data = data
+#         self.processed_images = []
+#         self.is_nd2 = is_nd2
+#         self.segmentation_cache = {} 
 
 
 class MorphologyWorker(QObject):
@@ -110,8 +110,6 @@ class MorphologyWorker(QObject):
         except Exception as e:
             self.error.emit(str(e))
             
-                      
-
 class TabWidgetApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -138,70 +136,68 @@ class TabWidgetApp(QMainWindow):
         self.initUI()
         self.layout.addWidget(self.tab_widget)
 
-    def load_from_folder(self, folder_path):
-        p = Path(folder_path)
+    # def load_from_folder(self, folder_path):
+    #     p = Path(folder_path)
 
-        images = p.iterdir()
-        # images = filter(lambda x : x.name.lower().endswith(('.tif')), images)
-        img_filelist = sorted(images, key=lambda x: int(x.stem))
+    #     images = p.iterdir()
+    #     # images = filter(lambda x : x.name.lower().endswith(('.tif')), images)
+    #     img_filelist = sorted(images, key=lambda x: int(x.stem))
 
-        preproc_img = lambda img: img  # Placeholder for now
-        loaded = np.array([preproc_img(cv2.imread(str(_img))) for _img in img_filelist])
+    #     preproc_img = lambda img: img  # Placeholder for now
+    #     loaded = np.array([preproc_img(cv2.imread(str(_img))) for _img in img_filelist])
 
-        self.image_data = ImageData(loaded, is_nd2=False)
+    #     self.image_data = ImageData(loaded, is_nd2=False)
 
-        print(f"Loaded dataset: {self.image_data.data.shape}")
-        self.info_label.setText(f"Dataset size: {self.image_data.data.shape}")
-        QMessageBox.about(
-            self, "Import", f"Loaded {self.image_data.data.shape[0]} pictures"
-        )
+    #     print(f"Loaded dataset: {self.image_data.data.shape}")
+    #     self.info_label.setText(f"Dataset size: {self.image_data.data.shape}")
+    #     QMessageBox.about(
+    #         self, "Import", f"Loaded {self.image_data.data.shape[0]} pictures"
+    #     )
 
-        self.image_data.phc_path = folder_path
+    #     self.image_data.phc_path = folder_path
 
-        self.image_data.segmentation_cache.clear()  # Clear segmentation cache
-        print("Segmentation cache cleared.")
+    #     self.image_data.segmentation_cache.clear()  # Clear segmentation cache
+    #     print("Segmentation cache cleared.")
     
-    def load_nd2_file(self, file_path):
+    # def load_nd2_file(self, file_path):
 
-        self.file_path = file_path
-        with nd2.ND2File(file_path) as nd2_file:
-            self.nd2_file = nd2_file
-            self.dimensions = nd2_file.sizes
-            info_text = f"Number of dimensions: {nd2_file.sizes}\n"
+    #     with nd2.ND2File(file_path) as nd2_file:
+    #         self.dimensions = nd2_file.sizes
+    #         info_text = f"Number of dimensions: {nd2_file.sizes}\n"
 
-            for dim, size in self.dimensions.items():
-                info_text += f"{dim}: {size}\n"
+    #         for dim, size in self.dimensions.items():
+    #             info_text += f"{dim}: {size}\n"
 
-            if "C" in self.dimensions.keys():
-                self.has_channels = True
-                self.channel_number = self.dimensions["C"]
-                self.slider_c.setMinimum(0)
-                self.slider_c.setMaximum(self.channel_number - 1)
-            else:
-                self.has_channels = False
+    #         if "C" in self.dimensions.keys():
+    #             self.has_channels = True
+    #             self.channel_number = self.dimensions["C"]
+    #             self.slider_c.setMinimum(0)
+    #             self.slider_c.setMaximum(self.channel_number - 1)
+    #         else:
+    #             self.has_channels = False
 
-            self.info_label.setText(info_text)
-            self.image_data = ImageData(nd2.imread(file_path, dask=True), is_nd2=True)
+    #         self.info_label.setText(info_text)
+    #         self.image_data = ImageData(nd2.imread(file_path, dask=True), is_nd2=True)
 
-            # Set the slider range for position (P) immediately based on dimensions
-            max_position = self.dimensions.get("P", 1) - 1
-            self.slider_p.setMaximum(max_position)
-            self.slider_p_5.setMaximum(max_position)  # Update population tab slider
+    #         # Set the slider range for position (P) immediately based on dimensions
+    #         max_position = self.dimensions.get("P", 1) - 1
+    #         self.slider_p.setMaximum(max_position)
+    #         self.slider_p_5.setMaximum(max_position)  # Update population tab slider
 
-            self.update_mapping_dropdowns()
-            self.update_controls()
+    #         self.update_mapping_dropdowns()
+    #         self.update_controls()
 
-            self.mapping_controls["time"].currentIndexChanged.connect(
-                self.update_slider_range
-            )
-            self.mapping_controls["position"].currentIndexChanged.connect(
-                self.update_slider_range
-            )
+    #         self.mapping_controls["time"].currentIndexChanged.connect(
+    #             self.update_slider_range
+    #         )
+    #         self.mapping_controls["position"].currentIndexChanged.connect(
+    #             self.update_slider_range
+    #         )
 
-            self.display_image()
+    #         self.display_image()
             
-            self.image_data.segmentation_cache.clear()  # Clear segmentation cache
-            print("Segmentation cache cleared.")
+    #         self.image_data.segmentation_cache.clear()  # Clear segmentation cache
+    #         print("Segmentation cache cleared.")
 
     def update_mapping_dropdowns(self):
         # Clear all dropdowns before updating
@@ -365,14 +361,15 @@ class TabWidgetApp(QMainWindow):
     def initImportTab(self):
         def importFile():
             file_dialog = QFileDialog()
-            file_path, _ = file_dialog.getOpenFileName()
-            if file_path:
-                self.load_nd2_file(file_path)
+            _path, _ = file_dialog.getOpenFileName()
+            if _path:
+                self.image_data = ImageData.load_nd2_file(_path)
 
         def importFolder():
             file_dialog = QFileDialog()
             _path = file_dialog.getExistingDirectory()
-            self.load_from_folder(_path)
+            if _path:
+                self.image_data = ImageData.load_from_folder(_path)
 
         def slice_and_export():
             if not hasattr(self, "image_data") or not self.image_data.is_nd2:
@@ -586,7 +583,6 @@ class TabWidgetApp(QMainWindow):
         ax.set_ylabel(selected_metric.capitalize())
         self.canvas_time_series.draw()
 
-    
     
     def initMorphologyTimeTab(self):
         layout = QVBoxLayout(self.morphologyTimeTab)
