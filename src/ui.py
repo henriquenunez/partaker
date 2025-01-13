@@ -169,7 +169,7 @@ class TabWidgetApp(QMainWindow):
     #             info_text += f"{dim}: {size}\n"
 
     #         if "C" in self.dimensions.keys():
-    #             self.has_channels = True
+    #             self.image_data.has_channels = True
     #             self.channel_number = self.dimensions["C"]
     #             self.slider_c.setMinimum(0)
     #             self.slider_c.setMaximum(self.channel_number - 1)
@@ -288,13 +288,13 @@ class TabWidgetApp(QMainWindow):
 
         # TODO: de-comment
         # Create a histogram of pixel counts using Seaborn
-        plt.figure(figsize=(10, 6))
-        sns.histplot(pixel_counts, bins=30, kde=False, color="blue", alpha=0.7)
-        plt.title("Histogram of Pixel Counts of Connected Components")
-        plt.xlabel("Pixel Count")
-        plt.ylabel("Number of Components")
-        plt.grid(True)
-        plt.show()
+        # plt.figure(figsize=(10, 6))
+        # sns.histplot(pixel_counts, bins=30, kde=False, color="blue", alpha=0.7)
+        # plt.title("Histogram of Pixel Counts of Connected Components")
+        # plt.xlabel("Pixel Count")
+        # plt.ylabel("Number of Components")
+        # plt.grid(True)
+        # plt.show()
 
         # Label connected components
         labeled_image, num_components = measure.label(img, connectivity=2, return_num=True)
@@ -303,12 +303,12 @@ class TabWidgetApp(QMainWindow):
         pixel_counts = np.bincount(labeled_image.ravel())[1:]  # Skip the first element (background)
 
         # Create a histogram of pixel counts
-        plt.hist(pixel_counts, bins=30, color='blue', alpha=0.7)
-        plt.title('Histogram of Pixel Counts of Connected Components')
-        plt.xlabel('Pixel Count')
-        plt.ylabel('Number of Components')
-        plt.grid(True)
-        plt.show()
+        # plt.hist(pixel_counts, bins=30, color='blue', alpha=0.7)
+        # plt.title('Histogram of Pixel Counts of Connected Components')
+        # plt.xlabel('Pixel Count')
+        # plt.ylabel('Number of Components')
+        # plt.grid(True)
+        # plt.show()
 
     def display_image(self):
         t = self.slider_t.value()
@@ -317,7 +317,7 @@ class TabWidgetApp(QMainWindow):
 
         image_data = self.image_data.data
         if self.image_data.is_nd2:
-            if self.has_channels:
+            if self.image_data.has_channels:
                 image_data = image_data[t, p, c]
             else:
                 image_data = image_data[t, p]
@@ -363,7 +363,7 @@ class TabWidgetApp(QMainWindow):
             file_dialog = QFileDialog()
             _path, _ = file_dialog.getOpenFileName()
             if _path:
-                self.image_data = ImageData.load_nd2_file(_path)
+                self.image_data, self.dimensions = ImageData.load_nd2_file(_path)
 
         def importFolder():
             file_dialog = QFileDialog()
@@ -441,12 +441,12 @@ class TabWidgetApp(QMainWindow):
         def segment_and_plot():
             t = self.slider_t.value()
             p = self.slider_p.value()
-            c = self.slider_c.value() if self.has_channels else None  # Default C to None
+            c = self.slider_c.value() if self.image_data.has_channels else None  # Default C to None
 
             # Extract the current frame
             image_data = self.image_data.data
             if self.image_data.is_nd2:
-                if self.has_channels:
+                if self.image_data.has_channels:
                     image_data = image_data[t, p, c]
                 else:
                     image_data = image_data[t, p]
@@ -838,12 +838,12 @@ class TabWidgetApp(QMainWindow):
     def annotate_cells(self):
         t = self.slider_t.value()
         p = self.slider_p.value()
-        c = self.slider_c.value() if self.has_channels else None
+        c = self.slider_c.value() if self.image_data.has_channels else None
 
         # Extract the current frame
         image_data = self.image_data.data
         if self.image_data.is_nd2:
-            frame = image_data[t, p, c] if self.has_channels else image_data[t, p]
+            frame = image_data[t, p, c] if self.image_data.has_channels else image_data[t, p]
         else:
             frame = image_data[t]
 
@@ -1004,12 +1004,12 @@ class TabWidgetApp(QMainWindow):
     def generate_annotations_and_scatter(self):
         t = self.slider_t.value()
         p = self.slider_p.value()
-        c = self.slider_c.value() if self.has_channels else None
+        c = self.slider_c.value() if self.image_data.has_channels else None
 
         # Extract the current frame
         image_data = self.image_data.data
         if self.image_data.is_nd2:
-            if self.has_channels:
+            if self.image_data.has_channels:
                 image_data = image_data[t, p, c]
             else:
                 image_data = image_data[t, p]
@@ -1087,10 +1087,10 @@ class TabWidgetApp(QMainWindow):
         # Extract the specific image frame
         t = self.slider_t.value()
         p = self.slider_p.value()
-        c = self.slider_c.value() if self.has_channels else None
+        c = self.slider_c.value() if self.image_data.has_channels else None
 
         if self.image_data.is_nd2:
-            if self.has_channels:
+            if self.image_data.has_channels:
                 image_data = self.image_data.data[t, p, c]
             else:
                 image_data = self.image_data.data[t, p]
@@ -1142,12 +1142,12 @@ class TabWidgetApp(QMainWindow):
     def extract_cells(self):
         t = self.slider_t.value()
         p = self.slider_p.value()
-        c = self.slider_c.value() if self.has_channels else None
+        c = self.slider_c.value() if self.image_data.has_channels else None
 
         # Extract the current frame
         image_data = self.image_data.data
         if self.image_data.is_nd2:
-            if self.has_channels:
+            if self.image_data.has_channels:
                 image_data = image_data[t, p, c]
             else:
                 image_data = image_data[t, p]
