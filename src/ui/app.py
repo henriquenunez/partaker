@@ -599,6 +599,7 @@ class App(QMainWindow):
         # Update UI or perform other actions with the new mask
         print(f"ROI mask created with shape: {self.roi_mask.shape}")
 
+
     def initMorphologyTimeTab(self):
         layout = QVBoxLayout(self.morphologyTimeTab)
 
@@ -619,6 +620,10 @@ class App(QMainWindow):
         self.overlay_video_button.clicked.connect(
             self.overlay_tracks_on_images)
         tracking_buttons_layout.addWidget(self.overlay_video_button)
+        
+        self.visualize_tracking_button = QPushButton("Visualize Tracking")
+        self.visualize_tracking_button.clicked.connect(self.visualize_tracking_on_images)
+        tracking_buttons_layout.addWidget(self.visualize_tracking_button)
 
         # Add the horizontal button layout to the main layout
         layout.addLayout(tracking_buttons_layout)
@@ -823,6 +828,199 @@ class App(QMainWindow):
             QMessageBox.warning(
                 self, "Error", f"Failed to create tracking video: {str(e)}")
 
+    def visualize_tracking_on_images(self):
+        """
+        Visualize cell tracking directly on original or segmented images.
+        """
+        if not hasattr(self, "tracked_cells") or not self.tracked_cells:
+            QMessageBox.warning(
+                self,
+                "Error",
+                "No tracking data available. Run cell tracking first.")
+            return
+            
+        # Ask user which image type to use
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QRadioButton, QLabel, QPushButton, QButtonGroup
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Visualization Options")
+        layout = QVBoxLayout(dialog)
+        
+        # Image type selection
+        layout.addWidget(QLabel("Select image type:"))
+        image_type_layout = QHBoxLayout()
+        image_type_group = QButtonGroup(dialog)
+        
+        original_radio = QRadioButton("Original Images")
+        original_radio.setChecked(True)
+        segmented_radio = QRadioButton("Segmented Images")
+        
+        image_type_group.addButton(original_radio)
+        image_type_group.addButton(segmented_radio)
+        
+        image_type_layout.addWidget(original_radio)
+        image_type_layout.addWidget(segmented_radio)
+        layout.addLayout(image_type_layout)
+        
+        # Track count selection
+        layout.addWidget(QLabel("Number of tracks to show:"))
+        from PySide6.QtWidgets import QSlider
+        track_slider = QSlider(Qt.Horizontal)
+        track_slider.setMinimum(10)
+        track_slider.setMaximum(100)
+        track_slider.setValue(50)
+        track_slider.setTickPosition(QSlider.TicksBelow)
+        track_slider.setTickInterval(10)
+        layout.addWidget(track_slider)
+        
+        track_count_label = QLabel(f"Show {track_slider.value()} tracks")
+        layout.addWidget(track_count_label)
+        
+        def update_track_label():
+            track_count_label.setText(f"Show {track_slider.value()} tracks")
+        
+        track_slider.valueChanged.connect(update_track_label)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        cancel_button = QPushButton("Cancel")
+        ok_button = QPushButton("OK")
+        
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(ok_button)
+        layout.addLayout(button_layout)
+        
+        # Connect buttons
+        cancel_button.clicked.connect(dialog.reject)
+        ok_button.clicked.connect(dialog.accept)
+        
+        # Show dialog
+        if dialog.exec() != QDialog.Accepted:
+            return
+        
+        # Get selected options
+        use_original = original_radio.isChecked()
+        max_tracks = track_slider.value()
+        
+        # Prepare to gather images
+        p = self.slider_p.value()
+        c = self.slider_c.value() if self.has_channels else None
+        
+        # Get total frames
+        t_max = min(self.dimensions.get("T", 1), 30)  # Limit to 30 frames for performance
+        
+        # Show progress dialog
+        progress = QProgressDialog(
+            "Processing frames for visualization...", "Cancel", 0, t_max, self)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        
+        # Collect images
+        images = []
+        for t in range(t_max):
+            progress.setValue(t)
+            if progress.wasCanceled():
+                return
+            
+            if use_original:
+                # Get original image
+                if self.image_data.is_nd2:
+                    img = self.image_data.data[t, p, c] if self.has_channels else self.image_data.data[t, p]
+                else:
+                    img = self.image_data.data[t]
+                
+                img = np.array(img)
+                
+                # Normalize if needed
+                if img.dtype != np.uint8:
+                    img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                
+                # Convert to RGB if grayscale
+                if len(img.shape) == 2:
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                
+                images.append(img)
+            else:
+                # Get segmented image
+                segmented = self.image_data.segmentation_cache[t, p, c]
+                
+                if segmented is None:
+                    # Use blank image as fallback
+                    h, w = self.image_data.data[0, p, c].shape if self.has_channels else self.image_data.data[0, p].shape
+                    blank = np.zeros((h, w), dtype=np.uint8)
+                    images.append(blank)
+                else:
+                    # Convert binary to uint8
+                    binary_uint8 = (segmented > 0).astype(np.uint8) * 255
+                    images.append(binary_uint8)
+        
+        if not images:
+            QMessageBox.warning(self, "Error", "No valid images found for visualization.")
+            progress.close()
+            return
+        
+        # Ask user for save location
+        output_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Tracking Visualization", "", "MP4 Files (*.mp4)")
+        if not output_path:
+            progress.close()
+            return
+        
+        # Update progress for video creation
+        progress.setLabelText("Creating tracking visualization...")
+        progress.setValue(0)
+        progress.setMaximum(100)
+        
+        # Use overlay_tracks_on_images from tracking.py
+        try:
+            from tracking import overlay_tracks_on_images
+            
+            # Define a progress callback
+            def update_progress(value):
+                progress.setValue(value)
+            
+            # Filter for top tracks by length
+            tracks_sorted = sorted(self.tracked_cells, key=lambda t: len(t.get('x', [])), reverse=True)
+            display_tracks = tracks_sorted[:max_tracks]
+            
+            # Convert images to correct format if needed
+            if use_original:
+                # Images are already in the right format (RGB)
+                pass
+            else:
+                # Convert segmented images (binary) to labeled format for better visualization
+                from skimage.measure import label
+                labeled_images = []
+                for binary in images:
+                    labeled = label(binary > 0)
+                    labeled_images.append(labeled)
+                images = labeled_images
+            
+            # Create video
+            images_array = np.array(images)
+            overlay_tracks_on_images(
+                images_array,
+                display_tracks,
+                save_video=True,
+                output_path=output_path,
+                show_frames=False,
+                max_tracks=max_tracks,
+                progress_callback=update_progress
+            )
+            
+            QMessageBox.information(
+                self,
+                "Visualization Complete",
+                f"Tracking visualization saved to {output_path}"
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(
+                self, "Error", f"Failed to create visualization: {str(e)}")
+        
+        progress.close()
+    
     def track_cells_with_lineage(self):
         # Check if lineage data is already loaded
         if hasattr(self, "lineage_tracks") and self.lineage_tracks is not None:
