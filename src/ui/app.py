@@ -162,7 +162,7 @@ class App(QMainWindow):
         self.populationTab = QWidget()
         self.morphologyTab = QWidget()
         self.morphologyTimeTab = QWidget()
-        
+
         # Add tracking state
         self.selected_cell_id = None  # Currently selected cell ID
         self.tracking_data = None  # Will store tracking data once generated
@@ -174,7 +174,7 @@ class App(QMainWindow):
     def select_cell_for_tracking(self, cell_id):
         """
         Select a specific cell to track across frames.
-        
+
         Parameters:
         -----------
         cell_id : int
@@ -182,7 +182,7 @@ class App(QMainWindow):
         """
         print(f"Selected cell {cell_id} for tracking")
         self.selected_cell_id = cell_id
-        
+
         # Check if we already have tracking data
         if not hasattr(self, "tracked_cells") or not self.tracked_cells:
             reply = QMessageBox.question(
@@ -194,55 +194,56 @@ class App(QMainWindow):
                 self.track_cells_with_lineage()
             else:
                 QMessageBox.warning(
-                    self, "Tracking Canceled", 
+                    self, "Tracking Canceled",
                     "Cannot track cell without generating tracking data."
                 )
                 self.selected_cell_id = None
                 return
-        
+
         # Identify this cell in tracking data
         self.find_cell_in_tracking_data(cell_id)
 
     def find_cell_in_tracking_data(self, cell_id):
         """Find a cell in the tracking data and prepare tracking information"""
         print(f"Finding cell {cell_id} in tracking data...")
-        
+
         # Clear previous tracking
         self.tracked_cell_lineage = {}
-        
+
         # Find the track for this cell
         selected_track = None
         for track in self.lineage_tracks:
             if track['ID'] == cell_id:
                 selected_track = track
                 break
-        
+
         if not selected_track:
             print(f"Cell {cell_id} not found in tracking data")
             QMessageBox.warning(
-                self, "Cell Not Found", 
+                self, "Cell Not Found",
                 f"Cell {cell_id} not found in tracking data."
             )
             return
-        
+
         # Get all frames where this cell appears
         if 't' in selected_track:
             t_values = selected_track['t']
             print(f"Cell {cell_id} appears in frames: {t_values}")
-            
+
             # Map each frame to this cell ID
             for t in t_values:
                 if t not in self.tracked_cell_lineage:
                     self.tracked_cell_lineage[t] = []
                 self.tracked_cell_lineage[t].append(cell_id)
-                
+
             # Get children cells if any
             if 'children' in selected_track and selected_track['children']:
-                print(f"Cell {cell_id} has children: {selected_track['children']}")
+                print(
+                    f"Cell {cell_id} has children: {selected_track['children']}")
                 self.add_children_to_tracking(selected_track['children'])
-        
+
         QMessageBox.information(
-            self, "Cell Tracking Prepared", 
+            self, "Cell Tracking Prepared",
             f"Cell {cell_id} will be tracked across {len(self.tracked_cell_lineage)} frames.\n"
             f"Use the time slider to navigate frames."
         )
@@ -256,55 +257,23 @@ class App(QMainWindow):
                 if track['ID'] == child_id:
                     child_track = track
                     break
-            
+
             if child_track and 't' in child_track:
                 print(f"Adding child {child_id} to tracking")
                 t_values = child_track['t']
-                
+
                 # Map each frame to this child ID
                 for t in t_values:
                     if t not in self.tracked_cell_lineage:
                         self.tracked_cell_lineage[t] = []
                     self.tracked_cell_lineage[t].append(child_id)
-                
+
                 # Recursively add this child's children
                 if 'children' in child_track and child_track['children']:
-                    print(f"Child {child_id} has children: {child_track['children']}")
+                    print(
+                        f"Child {child_id} has children: {child_track['children']}")
                     self.add_children_to_tracking(child_track['children'])
 
-    def on_image_click(self, event):
-        """Handle clicks on the image to select cells"""
-        # Get click position
-        x = event.position().x()
-        y = event.position().y()
-        
-        # Scale the positions based on the image display
-        pixmap = self.image_label.pixmap()
-        if pixmap:
-            # Calculate scaling factors
-            scale_x = pixmap.width() / self.image_label.width()
-            scale_y = pixmap.height() / self.image_label.height()
-            img_x = int(x * scale_x)
-            img_y = int(y * scale_y)
-        else:
-            return
-            
-        print(f"Clicked at position ({img_x}, {img_y})")
-        
-        # Find which cell's bounding box contains this point
-        for cell_id, cell_data in self.cell_mapping.items():
-            y1, x1, y2, x2 = cell_data["bbox"]
-            if x1 <= img_x <= x2 and y1 <= img_y <= y2:
-                print(f"Found cell {cell_id} at click position")
-                # Highlight the cell
-                self.highlight_cell_in_image(cell_id)
-                # Set up for tracking
-                self.select_cell_for_tracking(cell_id)
-                return
-        
-        print("No cell found at click position")
-    
-    
     def load_from_folder(self, folder_path):
         p = Path(folder_path)
 
@@ -643,7 +612,7 @@ class App(QMainWindow):
             Qt.IgnoreAspectRatio,
             Qt.SmoothTransformation)
         self.image_label.setPixmap(pixmap)
-        
+
         # Highlight tracked cells if any
         if hasattr(self, "tracked_cell_lineage") and self.tracked_cell_lineage:
             # Check if current frame has cells to highlight
@@ -651,16 +620,17 @@ class App(QMainWindow):
             if t in self.tracked_cell_lineage:
                 tracked_ids = self.tracked_cell_lineage[t]
                 print(f"Frame {t} has tracked cells: {tracked_ids}")
-                
+
                 # Always use segmented mode for displaying tracked cells
                 segmented = self.image_data.segmentation_cache[t, p, c]
                 if segmented is not None:
                     # Create a color version of the segmented image
-                    segmented_rgb = cv2.cvtColor((segmented > 0).astype(np.uint8) * 255, cv2.COLOR_GRAY2BGR)
-                    
+                    segmented_rgb = cv2.cvtColor((segmented > 0).astype(
+                        np.uint8) * 255, cv2.COLOR_GRAY2BGR)
+
                     # Label connected components in the segmented image
                     labeled = label(segmented)
-                    
+
                     # Get positions for tracked cells from tracking data
                     for cell_id in tracked_ids:
                         cell_position = None
@@ -669,9 +639,10 @@ class App(QMainWindow):
                             if track['ID'] == cell_id and 't' in track and 'x' in track and 'y' in track:
                                 for i, time in enumerate(track['t']):
                                     if time == t and i < len(track['x']) and i < len(track['y']):
-                                        cell_position = (int(track['x'][i]), int(track['y'][i]))
+                                        cell_position = (
+                                            int(track['x'][i]), int(track['y'][i]))
                                         break
-                        
+
                         if cell_position:
                             x, y = cell_position
                             # Find the region in the labeled image
@@ -680,33 +651,37 @@ class App(QMainWindow):
                                 if cell_label > 0:
                                     # Get mask for this specific cell
                                     cell_mask = (labeled == cell_label)
-                                    
+
                                     # Color the cell blue
-                                    segmented_rgb[cell_mask] = [255, 0, 0]  # BGR blue
-                                    
+                                    segmented_rgb[cell_mask] = [
+                                        255, 0, 0]  # BGR blue
+
                                     # Get bounding box for this cell
-                                    region_props = regionprops(cell_mask.astype(np.uint8))
+                                    region_props = regionprops(
+                                        cell_mask.astype(np.uint8))
                                     if region_props:
                                         y1, x1, y2, x2 = region_props[0].bbox
                                         # Draw bounding box
-                                        cv2.rectangle(segmented_rgb, (x1, y1), (x2, y2), (0, 255, 0), 1)
-                                        
+                                        cv2.rectangle(
+                                            segmented_rgb, (x1, y1), (x2, y2), (0, 255, 0), 1)
+
                                     # Add cell ID text
                                     cv2.putText(segmented_rgb, str(cell_id), (x, y - 5),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                    
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
                     # Display the modified segmented image
                     height, width = segmented_rgb.shape[:2]
                     bytes_per_line = 3 * width
-                    qimage = QImage(segmented_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888)
+                    qimage = QImage(segmented_rgb.data, width,
+                                    height, bytes_per_line, QImage.Format_RGB888)
                     pixmap = QPixmap.fromImage(qimage)
-                    pixmap = pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    pixmap = pixmap.scaled(self.image_label.size(
+                    ), Qt.KeepAspectRatio, Qt.SmoothTransformation)
                     self.image_label.setPixmap(pixmap)
-        
+
         # Store this processed image for export
         self.processed_images.append(image_data)
-        
-        
+
     def initImportTab(self):
         def importFile():
             file_dialog = QFileDialog()
@@ -798,7 +773,6 @@ class App(QMainWindow):
         # Update UI or perform other actions with the new mask
         print(f"ROI mask created with shape: {self.roi_mask.shape}")
 
-
     def initMorphologyTimeTab(self):
         layout = QVBoxLayout(self.morphologyTimeTab)
 
@@ -819,9 +793,10 @@ class App(QMainWindow):
         self.overlay_video_button.clicked.connect(
             self.overlay_tracks_on_images)
         tracking_buttons_layout.addWidget(self.overlay_video_button)
-        
+
         self.visualize_tracking_button = QPushButton("Visualize Tracking")
-        self.visualize_tracking_button.clicked.connect(self.visualize_tracking_on_images)
+        self.visualize_tracking_button.clicked.connect(
+            self.visualize_tracking_on_images)
         tracking_buttons_layout.addWidget(self.visualize_tracking_button)
 
         # Add the horizontal button layout to the main layout
@@ -1037,30 +1012,30 @@ class App(QMainWindow):
                 "Error",
                 "No tracking data available. Run cell tracking first.")
             return
-            
+
         # Ask user which image type to use
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QRadioButton, QLabel, QPushButton, QButtonGroup
-        
+
         dialog = QDialog(self)
         dialog.setWindowTitle("Select Visualization Options")
         layout = QVBoxLayout(dialog)
-        
+
         # Image type selection
         layout.addWidget(QLabel("Select image type:"))
         image_type_layout = QHBoxLayout()
         image_type_group = QButtonGroup(dialog)
-        
+
         original_radio = QRadioButton("Original Images")
         original_radio.setChecked(True)
         segmented_radio = QRadioButton("Segmented Images")
-        
+
         image_type_group.addButton(original_radio)
         image_type_group.addButton(segmented_radio)
-        
+
         image_type_layout.addWidget(original_radio)
         image_type_layout.addWidget(segmented_radio)
         layout.addLayout(image_type_layout)
-        
+
         # Track count selection
         layout.addWidget(QLabel("Number of tracks to show:"))
         from PySide6.QtWidgets import QSlider
@@ -1071,117 +1046,123 @@ class App(QMainWindow):
         track_slider.setTickPosition(QSlider.TicksBelow)
         track_slider.setTickInterval(10)
         layout.addWidget(track_slider)
-        
+
         track_count_label = QLabel(f"Show {track_slider.value()} tracks")
         layout.addWidget(track_count_label)
-        
+
         def update_track_label():
             track_count_label.setText(f"Show {track_slider.value()} tracks")
-        
+
         track_slider.valueChanged.connect(update_track_label)
-        
+
         # Buttons
         button_layout = QHBoxLayout()
         cancel_button = QPushButton("Cancel")
         ok_button = QPushButton("OK")
-        
+
         button_layout.addWidget(cancel_button)
         button_layout.addWidget(ok_button)
         layout.addLayout(button_layout)
-        
+
         # Connect buttons
         cancel_button.clicked.connect(dialog.reject)
         ok_button.clicked.connect(dialog.accept)
-        
+
         # Show dialog
         if dialog.exec() != QDialog.Accepted:
             return
-        
+
         # Get selected options
         use_original = original_radio.isChecked()
         max_tracks = track_slider.value()
-        
+
         # Prepare to gather images
         p = self.slider_p.value()
         c = self.slider_c.value() if self.has_channels else None
-        
+
         # Get total frames
-        t_max = min(self.dimensions.get("T", 1), 30)  # Limit to 30 frames for performance
-        
+        # Limit to 30 frames for performance
+        t_max = min(self.dimensions.get("T", 1), 30)
+
         # Show progress dialog
         progress = QProgressDialog(
             "Processing frames for visualization...", "Cancel", 0, t_max, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.show()
-        
+
         # Collect images
         images = []
         for t in range(t_max):
             progress.setValue(t)
             if progress.wasCanceled():
                 return
-            
+
             if use_original:
                 # Get original image
                 if self.image_data.is_nd2:
-                    img = self.image_data.data[t, p, c] if self.has_channels else self.image_data.data[t, p]
+                    img = self.image_data.data[t, p,
+                                               c] if self.has_channels else self.image_data.data[t, p]
                 else:
                     img = self.image_data.data[t]
-                
+
                 img = np.array(img)
-                
+
                 # Normalize if needed
                 if img.dtype != np.uint8:
-                    img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                
+                    img = cv2.normalize(img, None, 0, 255,
+                                        cv2.NORM_MINMAX).astype(np.uint8)
+
                 # Convert to RGB if grayscale
                 if len(img.shape) == 2:
                     img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-                
+
                 images.append(img)
             else:
                 # Get segmented image
                 segmented = self.image_data.segmentation_cache[t, p, c]
-                
+
                 if segmented is None:
                     # Use blank image as fallback
-                    h, w = self.image_data.data[0, p, c].shape if self.has_channels else self.image_data.data[0, p].shape
+                    h, w = self.image_data.data[0, p,
+                                                c].shape if self.has_channels else self.image_data.data[0, p].shape
                     blank = np.zeros((h, w), dtype=np.uint8)
                     images.append(blank)
                 else:
                     # Convert binary to uint8
                     binary_uint8 = (segmented > 0).astype(np.uint8) * 255
                     images.append(binary_uint8)
-        
+
         if not images:
-            QMessageBox.warning(self, "Error", "No valid images found for visualization.")
+            QMessageBox.warning(
+                self, "Error", "No valid images found for visualization.")
             progress.close()
             return
-        
+
         # Ask user for save location
         output_path, _ = QFileDialog.getSaveFileName(
             self, "Save Tracking Visualization", "", "MP4 Files (*.mp4)")
         if not output_path:
             progress.close()
             return
-        
+
         # Update progress for video creation
         progress.setLabelText("Creating tracking visualization...")
         progress.setValue(0)
         progress.setMaximum(100)
-        
+
         # Use overlay_tracks_on_images from tracking.py
         try:
             from tracking import overlay_tracks_on_images
-            
+
             # Define a progress callback
             def update_progress(value):
                 progress.setValue(value)
-            
+
             # Filter for top tracks by length
-            tracks_sorted = sorted(self.tracked_cells, key=lambda t: len(t.get('x', [])), reverse=True)
+            tracks_sorted = sorted(self.tracked_cells, key=lambda t: len(
+                t.get('x', [])), reverse=True)
             display_tracks = tracks_sorted[:max_tracks]
-            
+
             # Convert images to correct format if needed
             if use_original:
                 # Images are already in the right format (RGB)
@@ -1194,7 +1175,7 @@ class App(QMainWindow):
                     labeled = label(binary > 0)
                     labeled_images.append(labeled)
                 images = labeled_images
-            
+
             # Create video
             images_array = np.array(images)
             overlay_tracks_on_images(
@@ -1206,7 +1187,7 @@ class App(QMainWindow):
                 max_tracks=max_tracks,
                 progress_callback=update_progress
             )
-            
+
             QMessageBox.information(
                 self,
                 "Visualization Complete",
@@ -1217,9 +1198,9 @@ class App(QMainWindow):
             traceback.print_exc()
             QMessageBox.warning(
                 self, "Error", f"Failed to create visualization: {str(e)}")
-        
+
         progress.close()
-    
+
     def track_cells_with_lineage(self):
         # Check if lineage data is already loaded
         if hasattr(self, "lineage_tracks") and self.lineage_tracks is not None:
@@ -1428,10 +1409,10 @@ class App(QMainWindow):
                 progress.setValue(10)
                 progress.show()
                 QApplication.processEvents()
-                
+
                 self.growth_metrics = self.lineage_visualizer.calculate_growth_and_division_metrics(
                     self.lineage_tracks)
-                
+
                 progress.setValue(50)
                 progress.setLabelText("Creating visualization...")
                 QApplication.processEvents()
@@ -1440,36 +1421,41 @@ class App(QMainWindow):
             from matplotlib.figure import Figure
             # Increase figure size to fit the available space
             figure = Figure(figsize=(12, 10), dpi=100)
-            
+
             # Set up the subplots with more space between them
             gs = figure.add_gridspec(2, 2, hspace=0.4, wspace=0.4)
-            
+
             # Add the subplots
             ax1 = figure.add_subplot(gs[0, 0])  # Division Time Distribution
             ax2 = figure.add_subplot(gs[0, 1])  # Growth Rate Distribution
-            ax3 = figure.add_subplot(gs[1, 0])  # Division Time: Parent vs. Child
+            # Division Time: Parent vs. Child
+            ax3 = figure.add_subplot(gs[1, 0])
             ax4 = figure.add_subplot(gs[1, 1])  # Summary statistics
-            
+
             # 1. Histogram of division times
-            ax1.hist(self.growth_metrics['division_times'], bins=20, color='skyblue', edgecolor='black')
-            ax1.set_title('Division Time Distribution', fontsize=14, fontweight='bold')
+            ax1.hist(self.growth_metrics['division_times'],
+                     bins=20, color='skyblue', edgecolor='black')
+            ax1.set_title('Division Time Distribution',
+                          fontsize=14, fontweight='bold')
             ax1.set_xlabel('Time (frames)', fontsize=12)
             ax1.set_ylabel('Cell Count', fontsize=12)
-            ax1.axvline(self.growth_metrics['avg_division_time'], color='red', 
+            ax1.axvline(self.growth_metrics['avg_division_time'], color='red',
                         linestyle='--', label=f"Mean: {self.growth_metrics['avg_division_time']:.1f}")
-            ax1.axvline(self.growth_metrics['median_division_time'], color='green', 
+            ax1.axvline(self.growth_metrics['median_division_time'], color='green',
                         linestyle='--', label=f"Median: {self.growth_metrics['median_division_time']:.1f}")
             ax1.legend(fontsize=11)
-            
+
             # 2. Histogram of growth rates
-            ax2.hist(self.growth_metrics['growth_rates'], bins=20, color='lightgreen', edgecolor='black')
-            ax2.set_title('Growth Rate Distribution', fontsize=14, fontweight='bold')
+            ax2.hist(self.growth_metrics['growth_rates'],
+                     bins=20, color='lightgreen', edgecolor='black')
+            ax2.set_title('Growth Rate Distribution',
+                          fontsize=14, fontweight='bold')
             ax2.set_xlabel('Growth Rate (ln(2)/division time)', fontsize=12)
             ax2.set_ylabel('Cell Count', fontsize=12)
-            ax2.axvline(self.growth_metrics['avg_growth_rate'], color='red', 
+            ax2.axvline(self.growth_metrics['avg_growth_rate'], color='red',
                         linestyle='--', label=f"Mean: {self.growth_metrics['avg_growth_rate']:.4f}")
             ax2.legend(fontsize=11)
-            
+
             # 3. Parent vs child division times
             # Calculate parent-child division time pairs
             division_time_by_id = {}
@@ -1478,37 +1464,40 @@ class App(QMainWindow):
                     dt = track['t'][-1] - track['t'][0]
                     if dt > 0:
                         division_time_by_id[track['ID']] = dt
-            
+
             parent_child_division_pairs = []
             for track in self.lineage_tracks:
                 if 'children' in track and track['children'] and track['ID'] in division_time_by_id:
                     parent_dt = division_time_by_id[track['ID']]
-                    
+
                     for child_id in track['children']:
                         if child_id in division_time_by_id:
                             child_dt = division_time_by_id[child_id]
-                            parent_child_division_pairs.append((parent_dt, child_dt))
-            
+                            parent_child_division_pairs.append(
+                                (parent_dt, child_dt))
+
             if parent_child_division_pairs:
                 parent_dts, child_dts = zip(*parent_child_division_pairs)
                 ax3.scatter(parent_dts, child_dts, alpha=0.7, color='blue')
-                ax3.set_title('Division Time: Parent vs. Child', fontsize=14, fontweight='bold')
+                ax3.set_title('Division Time: Parent vs. Child',
+                              fontsize=14, fontweight='bold')
                 ax3.set_xlabel('Parent Division Time', fontsize=12)
                 ax3.set_ylabel('Child Division Time', fontsize=12)
-                
+
                 # Add y=x reference line
                 min_val = min(min(parent_dts), min(child_dts))
                 max_val = max(max(parent_dts), max(child_dts))
-                ax3.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.5)
-                
+                ax3.plot([min_val, max_val], [
+                         min_val, max_val], 'k--', alpha=0.5)
+
                 # Calculate correlation
                 correlation = np.corrcoef(parent_dts, child_dts)[0, 1]
-                ax3.text(0.05, 0.95, f"Correlation: {correlation:.2f}", 
-                        transform=ax3.transAxes, 
-                        verticalalignment='top',
-                        fontsize=12,
-                        bbox=dict(facecolor='white', alpha=0.8))
-            
+                ax3.text(0.05, 0.95, f"Correlation: {correlation:.2f}",
+                         transform=ax3.transAxes,
+                         verticalalignment='top',
+                         fontsize=12,
+                         bbox=dict(facecolor='white', alpha=0.8))
+
             ax4.axis('off')
 
             # Format the summary text with clear spacing
@@ -1528,33 +1517,35 @@ class App(QMainWindow):
                 summary += f"\nParent-Child Division Time\nCorrelation: {correlation:.2f}"
 
             # Create a visible background for the summary text
-            summary_text = ax4.text(0.05, 0.95, summary, 
-                                transform=ax4.transAxes,
-                                verticalalignment='top', 
-                                horizontalalignment='left',
-                                fontfamily='monospace', 
-                                fontsize=12,
-                                bbox=dict(facecolor='white', alpha=0.9, 
-                                        boxstyle='round,pad=1.0',
-                                        edgecolor='gray'))
-            
+            summary_text = ax4.text(0.05, 0.95, summary,
+                                    transform=ax4.transAxes,
+                                    verticalalignment='top',
+                                    horizontalalignment='left',
+                                    fontfamily='monospace',
+                                    fontsize=12,
+                                    bbox=dict(facecolor='white', alpha=0.9,
+                                              boxstyle='round,pad=1.0',
+                                              edgecolor='gray'))
+
             # Create the canvas and add to layout
             canvas = FigureCanvas(figure)
             growth_layout.addWidget(canvas)
-            
+
             # Adjust plot spacing
-            figure.subplots_adjust(hspace=0.35, wspace=0.35, bottom=0.1, top=0.95, left=0.1, right=0.95)
-            
+            figure.subplots_adjust(
+                hspace=0.35, wspace=0.35, bottom=0.1, top=0.95, left=0.1, right=0.95)
+
             # Store the figure for saving later
             growth_fig = figure
-            
+
             progress.setValue(100)
             progress.close()
 
         except Exception as e:
             import traceback
             traceback.print_exc()
-            error_label = QLabel(f"Error creating growth visualization: {str(e)}")
+            error_label = QLabel(
+                f"Error creating growth visualization: {str(e)}")
             error_label.setStyleSheet("color: red")
             growth_layout.addWidget(error_label)
 
@@ -1609,10 +1600,11 @@ class App(QMainWindow):
                     "Precomputing morphology classifications...")
                 progress.setValue(10)
                 QApplication.processEvents()
-                
+
                 if hasattr(self, "cell_mapping") and self.cell_mapping:
                     self.lineage_visualizer.cell_mapping = self.cell_mapping
-                    print(f"Transferring cell mapping with {len(self.cell_mapping)} entries to lineage visualizer")
+                    print(
+                        f"Transferring cell mapping with {len(self.cell_mapping)} entries to lineage visualizer")
 
                 # Precompute morphology for consistent classification
                 self.lineage_visualizer.precompute_morphology_classifications(
@@ -4586,13 +4578,17 @@ class App(QMainWindow):
         )
 
     def on_table_item_click(self, item):
+        """Handle clicks on the metrics table to select and track cells"""
         row = item.row()
-
         cell_id = self.metrics_table.item(row, 0).text()
+        cell_id = int(cell_id)
 
-        # print(f"Row {row} clicked, Cell ID: {cell_id}")
-
+        # Highlight the cell in the current frame
         self.highlight_cell_in_image(cell_id)
+
+        # Set up tracking for this cell across frames
+        print(f"Selected cell {cell_id} for tracking from table")
+        self.select_cell_for_tracking(cell_id)
 
     def highlight_cell_in_image(self, cell_id):
         # print(f"🔍 Highlighting cell with ID: {cell_id}")
