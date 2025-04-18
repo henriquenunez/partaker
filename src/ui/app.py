@@ -162,10 +162,149 @@ class App(QMainWindow):
         self.populationTab = QWidget()
         self.morphologyTab = QWidget()
         self.morphologyTimeTab = QWidget()
+        
+        # Add tracking state
+        self.selected_cell_id = None  # Currently selected cell ID
+        self.tracking_data = None  # Will store tracking data once generated
+        self.tracked_cell_lineage = {}  # Will map frame number to cell IDs to highlight
 
         self.initUI()
         self.layout.addWidget(self.tab_widget)
 
+    def select_cell_for_tracking(self, cell_id):
+        """
+        Select a specific cell to track across frames.
+        
+        Parameters:
+        -----------
+        cell_id : int
+            ID of the cell to track
+        """
+        print(f"Selected cell {cell_id} for tracking")
+        self.selected_cell_id = cell_id
+        
+        # Check if we already have tracking data
+        if not hasattr(self, "tracked_cells") or not self.tracked_cells:
+            reply = QMessageBox.question(
+                self, "Generate Tracking Data",
+                "Tracking data is needed to follow cells across frames. Generate now?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+            )
+            if reply == QMessageBox.Yes:
+                self.track_cells_with_lineage()
+            else:
+                QMessageBox.warning(
+                    self, "Tracking Canceled", 
+                    "Cannot track cell without generating tracking data."
+                )
+                self.selected_cell_id = None
+                return
+        
+        # Identify this cell in tracking data
+        self.find_cell_in_tracking_data(cell_id)
+
+    def find_cell_in_tracking_data(self, cell_id):
+        """Find a cell in the tracking data and prepare tracking information"""
+        print(f"Finding cell {cell_id} in tracking data...")
+        
+        # Clear previous tracking
+        self.tracked_cell_lineage = {}
+        
+        # Find the track for this cell
+        selected_track = None
+        for track in self.lineage_tracks:
+            if track['ID'] == cell_id:
+                selected_track = track
+                break
+        
+        if not selected_track:
+            print(f"Cell {cell_id} not found in tracking data")
+            QMessageBox.warning(
+                self, "Cell Not Found", 
+                f"Cell {cell_id} not found in tracking data."
+            )
+            return
+        
+        # Get all frames where this cell appears
+        if 't' in selected_track:
+            t_values = selected_track['t']
+            print(f"Cell {cell_id} appears in frames: {t_values}")
+            
+            # Map each frame to this cell ID
+            for t in t_values:
+                if t not in self.tracked_cell_lineage:
+                    self.tracked_cell_lineage[t] = []
+                self.tracked_cell_lineage[t].append(cell_id)
+                
+            # Get children cells if any
+            if 'children' in selected_track and selected_track['children']:
+                print(f"Cell {cell_id} has children: {selected_track['children']}")
+                self.add_children_to_tracking(selected_track['children'])
+        
+        QMessageBox.information(
+            self, "Cell Tracking Prepared", 
+            f"Cell {cell_id} will be tracked across {len(self.tracked_cell_lineage)} frames.\n"
+            f"Use the time slider to navigate frames."
+        )
+
+    def add_children_to_tracking(self, child_ids):
+        """Add children cells to tracking data recursively"""
+        for child_id in child_ids:
+            # Find the child's track
+            child_track = None
+            for track in self.lineage_tracks:
+                if track['ID'] == child_id:
+                    child_track = track
+                    break
+            
+            if child_track and 't' in child_track:
+                print(f"Adding child {child_id} to tracking")
+                t_values = child_track['t']
+                
+                # Map each frame to this child ID
+                for t in t_values:
+                    if t not in self.tracked_cell_lineage:
+                        self.tracked_cell_lineage[t] = []
+                    self.tracked_cell_lineage[t].append(child_id)
+                
+                # Recursively add this child's children
+                if 'children' in child_track and child_track['children']:
+                    print(f"Child {child_id} has children: {child_track['children']}")
+                    self.add_children_to_tracking(child_track['children'])
+
+    def on_image_click(self, event):
+        """Handle clicks on the image to select cells"""
+        # Get click position
+        x = event.position().x()
+        y = event.position().y()
+        
+        # Scale the positions based on the image display
+        pixmap = self.image_label.pixmap()
+        if pixmap:
+            # Calculate scaling factors
+            scale_x = pixmap.width() / self.image_label.width()
+            scale_y = pixmap.height() / self.image_label.height()
+            img_x = int(x * scale_x)
+            img_y = int(y * scale_y)
+        else:
+            return
+            
+        print(f"Clicked at position ({img_x}, {img_y})")
+        
+        # Find which cell's bounding box contains this point
+        for cell_id, cell_data in self.cell_mapping.items():
+            y1, x1, y2, x2 = cell_data["bbox"]
+            if x1 <= img_x <= x2 and y1 <= img_y <= y2:
+                print(f"Found cell {cell_id} at click position")
+                # Highlight the cell
+                self.highlight_cell_in_image(cell_id)
+                # Set up for tracking
+                self.select_cell_for_tracking(cell_id)
+                return
+        
+        print("No cell found at click position")
+    
+    
     def load_from_folder(self, folder_path):
         p = Path(folder_path)
 
@@ -504,10 +643,70 @@ class App(QMainWindow):
             Qt.IgnoreAspectRatio,
             Qt.SmoothTransformation)
         self.image_label.setPixmap(pixmap)
-
+        
+        # Highlight tracked cells if any
+        if hasattr(self, "tracked_cell_lineage") and self.tracked_cell_lineage:
+            # Check if current frame has cells to highlight
+            t = self.slider_t.value()
+            if t in self.tracked_cell_lineage:
+                tracked_ids = self.tracked_cell_lineage[t]
+                print(f"Frame {t} has tracked cells: {tracked_ids}")
+                
+                # Always use segmented mode for displaying tracked cells
+                segmented = self.image_data.segmentation_cache[t, p, c]
+                if segmented is not None:
+                    # Create a color version of the segmented image
+                    segmented_rgb = cv2.cvtColor((segmented > 0).astype(np.uint8) * 255, cv2.COLOR_GRAY2BGR)
+                    
+                    # Label connected components in the segmented image
+                    labeled = label(segmented)
+                    
+                    # Get positions for tracked cells from tracking data
+                    for cell_id in tracked_ids:
+                        cell_position = None
+                        # Find this cell's position in tracking data
+                        for track in self.lineage_tracks:
+                            if track['ID'] == cell_id and 't' in track and 'x' in track and 'y' in track:
+                                for i, time in enumerate(track['t']):
+                                    if time == t and i < len(track['x']) and i < len(track['y']):
+                                        cell_position = (int(track['x'][i]), int(track['y'][i]))
+                                        break
+                        
+                        if cell_position:
+                            x, y = cell_position
+                            # Find the region in the labeled image
+                            if 0 <= y < labeled.shape[0] and 0 <= x < labeled.shape[1]:
+                                cell_label = labeled[y, x]
+                                if cell_label > 0:
+                                    # Get mask for this specific cell
+                                    cell_mask = (labeled == cell_label)
+                                    
+                                    # Color the cell blue
+                                    segmented_rgb[cell_mask] = [255, 0, 0]  # BGR blue
+                                    
+                                    # Get bounding box for this cell
+                                    region_props = regionprops(cell_mask.astype(np.uint8))
+                                    if region_props:
+                                        y1, x1, y2, x2 = region_props[0].bbox
+                                        # Draw bounding box
+                                        cv2.rectangle(segmented_rgb, (x1, y1), (x2, y2), (0, 255, 0), 1)
+                                        
+                                    # Add cell ID text
+                                    cv2.putText(segmented_rgb, str(cell_id), (x, y - 5),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    
+                    # Display the modified segmented image
+                    height, width = segmented_rgb.shape[:2]
+                    bytes_per_line = 3 * width
+                    qimage = QImage(segmented_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888)
+                    pixmap = QPixmap.fromImage(qimage)
+                    pixmap = pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self.image_label.setPixmap(pixmap)
+        
         # Store this processed image for export
         self.processed_images.append(image_data)
-
+        
+        
     def initImportTab(self):
         def importFile():
             file_dialog = QFileDialog()
@@ -2811,6 +3010,7 @@ class App(QMainWindow):
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation)
         self.image_label.setPixmap(pixmap)
+        self.image_label.mousePressEvent = self.on_image_click
 
         self.update_annotation_scatter()
 
