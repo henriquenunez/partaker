@@ -174,15 +174,10 @@ class App(QMainWindow):
     def select_cell_for_tracking(self, cell_id):
         """
         Select a specific cell to track across frames.
-
-        Parameters:
-        -----------
-        cell_id : int
-            ID of the cell to track
         """
         print(f"Selected cell {cell_id} for tracking")
         self.selected_cell_id = cell_id
-
+        
         # Check if we already have tracking data
         if not hasattr(self, "tracked_cells") or not self.tracked_cells:
             reply = QMessageBox.question(
@@ -194,14 +189,45 @@ class App(QMainWindow):
                 self.track_cells_with_lineage()
             else:
                 QMessageBox.warning(
-                    self, "Tracking Canceled",
+                    self, "Tracking Canceled", 
                     "Cannot track cell without generating tracking data."
                 )
                 self.selected_cell_id = None
                 return
-
+        
         # Identify this cell in tracking data
         self.find_cell_in_tracking_data(cell_id)
+        
+        # In your select_cell_for_tracking method, replace the button creation code with:
+        if hasattr(self, "tracked_cell_lineage") and self.tracked_cell_lineage:
+            # Only add the button if we don't already have one
+            if not hasattr(self, "save_gif_button") or self.save_gif_button is None:
+                self.save_gif_button = QPushButton("Save Cell Movement as GIF")
+                self.save_gif_button.clicked.connect(self.save_tracked_cell_as_gif)
+                
+                # Add to the same layout as the Export to CSV button
+                # Find the layout containing the Export to CSV button
+                if hasattr(self, "table_tab") and self.table_tab:
+                    table_layout = self.table_tab.layout()
+                    
+                    # Create a horizontal layout for the buttons if needed
+                    if not hasattr(self, "table_buttons_layout"):
+                        self.table_buttons_layout = QHBoxLayout()
+                        table_layout.insertLayout(0, self.table_buttons_layout)
+                        
+                        # Move the Export to CSV button to this layout if it exists
+                        if hasattr(self, "export_button"):
+                            # Remove it from its current layout first
+                            current_layout = self.export_button.parent().layout()
+                            if current_layout:
+                                current_layout.removeWidget(self.export_button)
+                            
+                            # Add it to the new layout
+                            self.table_buttons_layout.addWidget(self.export_button)
+                    
+                    # Add the save GIF button
+                    self.table_buttons_layout.addWidget(self.save_gif_button)
+            
 
     def find_cell_in_tracking_data(self, cell_id):
         """Find a cell in the tracking data and prepare tracking information"""
@@ -274,6 +300,126 @@ class App(QMainWindow):
                         f"Child {child_id} has children: {child_track['children']}")
                     self.add_children_to_tracking(child_track['children'])
 
+    def save_tracked_cell_as_gif(self):
+        """
+        Save the movement of the tracked cell as an animated GIF.
+        """
+        if not hasattr(self, "tracked_cell_lineage") or not self.tracked_cell_lineage:
+            QMessageBox.warning(self, "Error", "No cell is being tracked.")
+            return
+        
+        # Ask user for save location
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Cell Movement as GIF", "", "GIF Files (*.gif)"
+        )
+        if not save_path:
+            return
+        
+        # Show progress dialog
+        progress = QProgressDialog(
+            "Creating cell movement GIF...", "Cancel", 0, 100, self
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+        
+        try:
+            # Get all frames where this cell appears
+            frame_numbers = sorted(self.tracked_cell_lineage.keys())
+            if not frame_numbers:
+                QMessageBox.warning(self, "Error", "No frames available for tracked cell.")
+                return
+            
+            # Create a list to store frame images
+            frames = []
+            
+            # Process each frame
+            for i, t in enumerate(frame_numbers):
+                progress.setValue(int((i / len(frame_numbers)) * 50))
+                if progress.wasCanceled():
+                    return
+                
+                p = self.slider_p.value()
+                c = self.slider_c.value() if self.has_channels else None
+                
+                # Get the segmentation for this frame
+                segmented = self.image_data.segmentation_cache[t, p, c]
+                if segmented is None:
+                    continue
+                    
+                # Create a colored version of the segmentation
+                segmented_rgb = cv2.cvtColor((segmented > 0).astype(np.uint8) * 255, cv2.COLOR_GRAY2BGR)
+                
+                # Get the cell IDs to highlight in this frame
+                cell_ids = self.tracked_cell_lineage[t]
+                
+                # Create a labeled version of the segmentation
+                labeled_image = label(segmented)
+                
+                # Highlight each cell
+                for cell_id in cell_ids:
+                    # Find the cell's position in the tracking data
+                    cell_x, cell_y = None, None
+                    for track in self.lineage_tracks:
+                        if track['ID'] == cell_id and 't' in track and 'x' in track and 'y' in track:
+                            for j, time in enumerate(track['t']):
+                                if time == t and j < len(track['x']) and j < len(track['y']):
+                                    cell_x = int(track['x'][j])
+                                    cell_y = int(track['y'][j])
+                                    break
+                    
+                    if cell_x is not None and cell_y is not None:
+                        # Find the cell in the segmentation
+                        if 0 <= cell_y < labeled_image.shape[0] and 0 <= cell_x < labeled_image.shape[1]:
+                            cell_label = labeled_image[cell_y, cell_x]
+                            
+                            if cell_label > 0:
+                                # Create a mask for this cell
+                                cell_mask = (labeled_image == cell_label)
+                                
+                                # Color the cell blue
+                                segmented_rgb[cell_mask] = [255, 0, 0]  # BGR blue
+                                
+                                # Add cell ID
+                                cv2.putText(segmented_rgb, str(cell_id), (cell_x, cell_y - 5),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                
+                # Add frame counter
+                cv2.putText(segmented_rgb, f"Frame: {t}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+                # Add to frames list
+                frames.append(segmented_rgb)
+            
+            # Create the GIF
+            progress.setLabelText("Saving GIF...")
+            progress.setValue(50)
+            
+            if frames:
+                import imageio
+                
+                # Convert BGR to RGB for imageio
+                rgb_frames = [cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in frames]
+                
+                # Save as GIF
+                imageio.mimsave(save_path, rgb_frames, fps=5)
+                
+                progress.setValue(100)
+                QMessageBox.information(
+                    self, "GIF Created", 
+                    f"Cell movement saved as GIF to:\n{save_path}"
+                )
+            else:
+                QMessageBox.warning(self, "Error", "No valid frames were generated.")
+        
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(
+                self, "Error", f"Failed to create GIF: {str(e)}"
+            )
+        finally:
+            progress.close()
+    
     def load_from_folder(self, folder_path):
         p = Path(folder_path)
 
@@ -3002,7 +3148,6 @@ class App(QMainWindow):
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation)
         self.image_label.setPixmap(pixmap)
-        self.image_label.mousePressEvent = self.on_image_click
 
         self.update_annotation_scatter()
 
