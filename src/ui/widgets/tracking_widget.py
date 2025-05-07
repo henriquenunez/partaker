@@ -384,7 +384,7 @@ class TrackingWidget(QWidget):
 
         self.figure.tight_layout()
         self.canvas.draw()
-    
+
     def show_lineage_dialog(self):
         """Open the lineage visualization dialog"""
         if not self.lineage_tracks:
