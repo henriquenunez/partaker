@@ -3006,6 +3006,7 @@ class App(QMainWindow):
 
     # In your main App class (app.py)
 
+    
     def save_to_folder(self):
         """Save the current project to a folder"""
         folder_path = QFileDialog.getExistingDirectory(
@@ -3073,7 +3074,8 @@ class App(QMainWindow):
                 f"Project saved to {folder_path}" +
                 ("\nIncludes tracking data" if tracking_saved else "")
             )
-
+    
+    
     def load_from_folder(self):
         """Load a project from a folder"""
         folder_path = QFileDialog.getExistingDirectory(
