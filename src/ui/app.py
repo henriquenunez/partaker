@@ -3264,9 +3264,7 @@ class App(QMainWindow):
         self.tab_widget.addTab(self.populationTab, "Population")
         self.tab_widget.addTab(self.morphologyTab, "Morphology")
         self.tab_widget.addTab(self.morphologyTimeTab, "Morphology / Time")
-        self.tab_widget.addTab(
-            self.morphologyVisualizationTab,
-            "Morphology Visualization")
+        # self.tab_widget.addTab(self.morphologyVisualizationTab,"Morphology Visualization")
 
         # Initialize tab layouts and content
         self.initImportTab()

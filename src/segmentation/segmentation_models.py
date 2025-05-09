@@ -18,7 +18,7 @@ from skimage import exposure
 from skimage.restoration import richardson_lucy
 from skimage.measure import label
 
-from cellSAM import segment_cellular_image, get_model
+# from cellSAM import segment_cellular_image, get_model
 
 # # Example usage
 # segmentation_models = SegmentationModels()
