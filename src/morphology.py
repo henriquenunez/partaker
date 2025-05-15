@@ -224,7 +224,7 @@ def annotate_image(image, cell_mapping):
 
 def annotate_binary_mask(segmented_image, cell_mapping):
     """
-    Annotate the binary segmented mask with bounding boxes and morphology class color codes.
+    Annotate the binary segmented mask by coloring each cell according to its morphology class.
 
     Parameters:
     -----------
@@ -236,50 +236,51 @@ def annotate_binary_mask(segmented_image, cell_mapping):
     Returns:
     --------
     annotated : np.ndarray
-        Annotated binary mask with bounding boxes and labels.
+        Annotated image with cells colored by morphology class.
     """
     # Ensure input is grayscale
     if len(segmented_image.shape) == 3:
         segmented_image = cv2.cvtColor(segmented_image, cv2.COLOR_BGR2GRAY)
 
-    # Convert grayscale to RGB for annotations
-    annotated = cv2.cvtColor(segmented_image, cv2.COLOR_GRAY2RGB)
+    # Create a blank RGB image (black background)
+    annotated = np.zeros((segmented_image.shape[0], segmented_image.shape[1], 3), dtype=np.uint8)
 
-    # Define color mapping for morphology classes
+    # Define color mapping to match the PCA plot - BGR format for OpenCV
+    # These are manually adjusted to match the colors in your screenshot
     morphology_colors = {
         "Artifact": (128, 128, 128),  # Gray
-        "Divided": (255, 0, 0),       # Blue
+        "Divided": (0, 0, 255),       # Red (appears as red in your image)
         "Healthy": (0, 255, 0),       # Green
-        "Elongated": (0, 255, 255),   # Yellow
+        "Elongated": (255, 255, 0),   # Cyan (appears as cyan in your image)
         "Deformed": (255, 0, 255),    # Magenta
     }
 
+    # Label the connected components in the segmented image
+    from skimage.measure import label
+    labeled_image = label(segmented_image)
+    
+    # Map each labeled region to its corresponding cell ID and morphology class
+    region_to_class = {}
     for cell_id, data in cell_mapping.items():
         y1, x1, y2, x2 = data["bbox"]
-
-        # Get the morphology class and corresponding color
         morphology_class = data["metrics"].get("morphology_class", "Healthy")
-        color = morphology_colors.get(
-            morphology_class, (255, 255, 255))  # Default to white
-
-        # Draw bounding box with morphology-specific color
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-
-        # Add text label for cell ID and class
-        label = f"{cell_id}: {morphology_class}"
-        cv2.putText(
-            annotated,
-            label,
-            (x1, y1 - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            color,
-            1,
-            cv2.LINE_AA,
-        )
-
+        
+        # Find the label for this cell by checking the center of its bounding box
+        center_y = (y1 + y2) // 2
+        center_x = (x1 + x2) // 2
+        
+        if 0 <= center_y < labeled_image.shape[0] and 0 <= center_x < labeled_image.shape[1]:
+            label_id = labeled_image[center_y, center_x]
+            if label_id > 0:  # Skip background (0)
+                region_to_class[label_id] = morphology_class
+    
+    # Color each region according to its morphology class
+    for label_id, morphology_class in region_to_class.items():
+        color = morphology_colors.get(morphology_class, (255, 255, 255))
+        mask = (labeled_image == label_id)
+        annotated[mask] = color
+    
     return annotated
-
 
 def extract_cell_morphologies(binary_image: np.array) -> pd.DataFrame:
     """
