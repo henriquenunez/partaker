@@ -15,7 +15,7 @@ from skimage.measure import label, regionprops
 import pandas as pd
 from pubsub import pub
 from tracking import create_density_based_regions_from_forecast_data, enhanced_motility_index, visualize_motility_with_chamber_regions, visualize_motility_map
-
+from .density_animation import add_animation_button_to_motility_widget
 
 # Modify in motility_widget.py
 
@@ -1184,6 +1184,46 @@ class MotilityDialog(QDialog):
         
         bottom_panel.addWidget(summary_export_btn)
         self.density_layout.addLayout(bottom_panel)
+        add_animation_button_to_motility_widget(self)
+        
+        
+    def get_tracking_data_summary(self):
+        """Get summary of available tracking data for animation"""
+        summary = {
+            'has_tracked_cells': hasattr(self, 'tracked_cells') and bool(self.tracked_cells),
+            'has_lineage_tracks': hasattr(self, 'lineage_tracks') and bool(self.lineage_tracks),
+            'tracked_cells_count': len(getattr(self, 'tracked_cells', [])),
+            'lineage_tracks_count': len(getattr(self, 'lineage_tracks', [])),
+            'chamber_dimensions': getattr(self, 'chamber_dimensions', (1392, 1040)),
+            'has_density_data': hasattr(self, 'density_data') and bool(self.density_data)
+        }
+        return summary
+
+
+    def validate_animation_data(self):
+        """Validate that required data is available for animation"""
+        errors = []
+        
+        if not hasattr(self, 'tracked_cells') or not self.tracked_cells:
+            errors.append("No filtered tracking data available")
+        
+        if not hasattr(self, 'lineage_tracks') or not self.lineage_tracks:
+            errors.append("No lineage tracking data available")
+            
+        if not hasattr(self, 'chamber_dimensions'):
+            errors.append("Chamber dimensions not set")
+            
+        # Check if tracks have required fields
+        if hasattr(self, 'tracked_cells') and self.tracked_cells:
+            sample_track = self.tracked_cells[0]
+            required_fields = ['x', 'y', 'ID']
+            for field in required_fields:
+                if field not in sample_track:
+                    errors.append(f"Track data missing required field: {field}")
+                    break
+        
+        return errors
+
 
     def export_forecast_data(self):
         """Export with dialog to choose filtered vs all tracks"""

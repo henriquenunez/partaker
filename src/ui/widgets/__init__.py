@@ -4,6 +4,7 @@ from .population import PopulationWidget
 from .segmentation import SegmentationWidget
 from .morphology import MorphologyWidget
 from .tracking_manager import TrackingManager
+from .density_animation import DensityAnimationGenerator
 
 __all__ = [
     'ViewAreaWidget',
@@ -11,4 +12,5 @@ __all__ = [
     'SegmentationWidget',
     'MorphologyWidget',
     'TrackingManager'
+    'DensityAnimationGenerator'
 ]
