@@ -592,7 +592,7 @@ class BacterialDensityAnimationModal(QDialog):
         ax.set_ylabel('Y Position (pixels)')
 
         # Title with time info
-        title = f"Bacterial Density Evolution - Time Point {stats['time_point']} ({mode_label} Mode)"
+        title = f"Cell Density Formation - Time Point {stats['time_point']} ({mode_label} Mode)"
         ax.set_title(title, fontsize=14, fontweight='bold')
 
         self.canvas.draw()
@@ -751,7 +751,7 @@ class BacterialDensityAnimationModal(QDialog):
                 
                 ax.set_xlim(0, width)
                 ax.set_ylim(0, height)
-                ax.set_title(f"Bacterial Density - Time Point {stats['time_point']} ({mode_label})")
+                ax.set_title(f"Cell Density - Time Point {stats['time_point']} ({mode_label})")
                 
                 import matplotlib
                 matplotlib.use('Agg')  
