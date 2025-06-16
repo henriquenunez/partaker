@@ -1361,9 +1361,6 @@ class MotilityDialog(QDialog):
                                     # Fluorescence data if available
                                     'fluorescence_ch1': morphology_data.get('fluo_1'),
                                     'fluorescence_ch2': morphology_data.get('fluo_2'),
-                                    'mean_intensity': morphology_data.get('mean_intensity'),
-                                    'integrated_intensity': morphology_data.get('integrated_intensity'),
-                                    'morphology_match_distance': morphology_data.get('_match_distance', None)
                                 })
                             else:
                                 # No morphology match found - add None values
@@ -1382,9 +1379,6 @@ class MotilityDialog(QDialog):
                                     'bbox_y1': None, 'bbox_x1': None, 'bbox_y2': None, 'bbox_x2': None,
                                     'fluorescence_ch1': None,
                                     'fluorescence_ch2': None,
-                                    'mean_intensity': None,
-                                    'integrated_intensity': None,
-                                    'morphology_match_distance': None
                                 })
                         
                         export_data.append(row_data)
