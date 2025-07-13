@@ -1,0 +1,28 @@
+{
+  "colony_grouping": {
+    "connection_distance": 8,
+    "min_colony_size": 15,
+    "max_gap_size": 5
+  },
+  "colony_tracking": {
+    "max_displacement": 30,
+    "overlap_threshold": 0.5,
+    "track_min_length": 3
+  },
+  "spatial_analysis": {
+    "grid_size": 20,
+    "smoothing_radius": 15,
+    "edge_detection_sigma": 2
+  },
+  "visualization": {
+    "default_colormap": "viridis",
+    "show_colony_ids": true,
+    "show_tracks": true,
+    "track_color_by": "motility"
+  },
+  "cloud_dynamics": {
+    "movement_threshold": 2.0,
+    "growth_threshold": 1.1,
+    "division_min_fragments": 2
+  }
+}

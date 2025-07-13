@@ -221,6 +221,7 @@ class MetricsService:
 
             # Calculate basic shape metrics
             metrics = {
+                "data_type": "cell",
                 "position": position,
                 "time": time,
                 "cell_id": cell_id,
@@ -397,3 +398,78 @@ class MetricsService:
 
         # Return True if we have any matching data
         return filtered.height > 0
+    
+    
+    def add_colony_metrics(self, colony_metrics):
+        """
+        Add colony-level metrics to the data collection.
+        
+        Args:
+            colony_metrics: Dictionary containing colony metrics
+        """
+        # Add colony data to our collection
+        self._data.append(colony_metrics)
+        logger.info(f"Added colony metrics - T:{colony_metrics['time']} P:{colony_metrics['position']} Colony:{colony_metrics['colony_id']}")
+
+    def get_colony_data(self, position=None, time=None, colony_id=None):
+        """
+        Query colony data specifically.
+        
+        Args:
+            position: Filter by position
+            time: Filter by time  
+            colony_id: Filter by colony ID
+        
+        Returns:
+            Filtered DataFrame containing only colony data
+        """
+        if self.df.is_empty():
+            return pl.DataFrame()
+        
+        # Filter for colony data (has colony_id column)
+        colony_df = self.df.filter(pl.col("data_type") == "colony")
+        
+        # Apply additional filters
+        if position is not None:
+            colony_df = colony_df.filter(pl.col("position") == position)
+        if time is not None:
+            colony_df = colony_df.filter(pl.col("time") == time)
+        if colony_id is not None:
+            colony_df = colony_df.filter(pl.col("colony_id") == colony_id)
+        
+        return colony_df
+
+    def get_cell_data(self, position=None, time=None, cell_id=None, channel=None):
+        """
+        Query cell data specifically.
+        
+        Args:
+            position: Filter by position
+            time: Filter by time
+            cell_id: Filter by cell ID
+            channel: Filter by channel
+        
+        Returns:
+            Filtered DataFrame containing only cell data
+        """
+        if self.df.is_empty():
+            return pl.DataFrame()
+        
+        # Start with all data
+        filtered_df = self.df
+        
+        # Filter for cell data if we have a data_type column
+        if "data_type" in self.df.columns:
+            filtered_df = filtered_df.filter(pl.col("data_type") == "cell")
+        
+        # Apply additional filters
+        if position is not None:
+            filtered_df = filtered_df.filter(pl.col("position") == position)
+        if time is not None:
+            filtered_df = filtered_df.filter(pl.col("time") == time)
+        if cell_id is not None:
+            filtered_df = filtered_df.filter(pl.col("cell_id") == cell_id)
+        if channel is not None:
+            filtered_df = filtered_df.filter(pl.col("channel") == channel)
+        
+        return filtered_df

@@ -43,6 +43,9 @@ from pubsub import pub
 
 from experiment import Experiment
 from metrics_service import MetricsService
+from ui.analysis_mode import AnalysisMode, AnalysisModeConfig
+from ui.dialogs.mode_selection_dialog import ModeSelectionDialog
+from config.biofilm_config import BiofilmConfig
 
 
 class MorphologyWorker(QObject):
@@ -130,8 +133,21 @@ class App(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # Set window properties first
-        self.setWindowTitle("Partaker 3 - GUI")
+        print("DEBUG: Starting app initialization...")
+
+        # Initialize analysis mode configuration FIRST
+        self.analysis_config = AnalysisModeConfig()
+
+        self.biofilm_config = BiofilmConfig()
+
+        # Show mode selection dialog
+        selected_mode = ModeSelectionDialog.show_mode_selection(
+            self.analysis_config, self)
+        self.current_analysis_mode = selected_mode
+
+        # Set window properties
+        mode_name = selected_mode.display_name
+        self.setWindowTitle(f"Partaker 3 - {mode_name}")
         self.setGeometry(100, 100, 1000, 800)
 
         # Create central widget
@@ -155,7 +171,7 @@ class App(QMainWindow):
         # Initialize other UI components
         self.tab_widget = QTabWidget()
 
-        # Complete initialization
+        # Complete initialization based on analysis mode
         self.init_ui()
         self.layout.addWidget(self.tab_widget)
 
@@ -166,7 +182,7 @@ class App(QMainWindow):
         pub.subscribe(self.on_draw_cell_bounding_boxes,
                       "draw_cell_bounding_boxes")
         pub.subscribe(self.highlight_cell, "highlight_cell_requested")
-        
+
         pub.subscribe(self.provide_image_data, "get_image_data")
 
     def provide_image_data(self, callback):
@@ -185,7 +201,6 @@ class App(QMainWindow):
         self.image_data = ImageData.load_nd2(experiment.nd2_files[0])
         pub.sendMessage("image_data_loaded", image_data=self.image_data)
 
-    
     def load_from_folder(self):
         """Load a project from a folder"""
         folder_path = QFileDialog.getExistingDirectory(
@@ -198,40 +213,46 @@ class App(QMainWindow):
             try:
                 # Check for segmentation cache files
                 cache_path = os.path.join(folder_path, "segmentation_cache.h5")
-                metadata_path = os.path.join(folder_path, "segmentation_metadata.json")
-                
+                metadata_path = os.path.join(
+                    folder_path, "segmentation_metadata.json")
+
                 if os.path.exists(cache_path):
                     print(f"DEBUG: Found segmentation cache at {cache_path}")
                     cache_size = os.path.getsize(cache_path)
-                    print(f"DEBUG: Cache file size: {cache_size/1024/1024:.2f} MB")
+                    print(
+                        f"DEBUG: Cache file size: {cache_size/1024/1024:.2f} MB")
                 else:
-                    print(f"DEBUG: No segmentation cache found at {cache_path}")
-                    
+                    print(
+                        f"DEBUG: No segmentation cache found at {cache_path}")
+
                 if os.path.exists(metadata_path):
-                    print(f"DEBUG: Found segmentation metadata at {metadata_path}")
+                    print(
+                        f"DEBUG: Found segmentation metadata at {metadata_path}")
                     import json
                     with open(metadata_path, 'r') as f:
                         metadata = json.load(f)
                         print(f"DEBUG: Metadata: {metadata}")
                 else:
-                    print(f"DEBUG: No segmentation metadata found at {metadata_path}")
+                    print(
+                        f"DEBUG: No segmentation metadata found at {metadata_path}")
 
                 # Load image data
                 print(f"DEBUG: Loading image data")
                 self.image_data = ImageData.load(folder_path)
                 print(f"DEBUG: Image data loaded successfully")
-                
+
                 # Check segmentation cache status after loading
                 if hasattr(self.image_data, "segmentation_cache"):
                     cache = self.image_data.segmentation_cache
                     print("DEBUG: Inspecting segmentation cache after loading:")
                     print(f"DEBUG: Cache model name: {cache.model_name}")
-                    
+
                     # Check all models in cache
                     for model_name in cache.mmap_arrays_idx.keys():
                         array, indices = cache.mmap_arrays_idx[model_name]
-                        print(f"DEBUG: Model {model_name} has {len(indices)} entries")
-                        
+                        print(
+                            f"DEBUG: Model {model_name} has {len(indices)} entries")
+
                         # Show some sample indices to see their format
                         sample_indices = list(indices)[:5] if indices else []
                         print(f"DEBUG: Sample indices: {sample_indices}")
@@ -244,21 +265,25 @@ class App(QMainWindow):
                 metrics_service = MetricsService()
                 metrics_loaded = metrics_service.load_from_file(folder_path)
                 print(f"DEBUG: Metrics loaded: {metrics_loaded}")
-                
+
                 if metrics_loaded:
                     # Print some metrics statistics
                     query_result = metrics_service.query()
                     if not query_result.is_empty():
-                        print(f"DEBUG: Loaded {query_result.height} metric rows")
+                        print(
+                            f"DEBUG: Loaded {query_result.height} metric rows")
                         print(f"DEBUG: Metric columns: {query_result.columns}")
-                        
+
                         # Check a few specific frames
                         for t, p, c in [(0, 0, 0), (0, 1, 0), (1, 0, 0)]:
-                            frame_metrics = metrics_service.query(time=t, position=p, channel=c)
+                            frame_metrics = metrics_service.query(
+                                time=t, position=p, channel=c)
                             if not frame_metrics.is_empty():
-                                print(f"DEBUG: Found {frame_metrics.height} metrics for T={t}, P={p}, C={c}")
+                                print(
+                                    f"DEBUG: Found {frame_metrics.height} metrics for T={t}, P={p}, C={c}")
                             else:
-                                print(f"DEBUG: No metrics found for T={t}, P={p}, C={c}")
+                                print(
+                                    f"DEBUG: No metrics found for T={t}, P={p}, C={c}")
                     else:
                         print(f"DEBUG: No metric rows loaded")
 
@@ -267,16 +292,19 @@ class App(QMainWindow):
                     # Update the ViewAreaWidget model dropdown
                     if hasattr(self.image_data, "segmentation_cache") and self.image_data.segmentation_cache.model_name:
                         model_name = self.image_data.segmentation_cache.model_name
-                        index = self.viewArea.model_dropdown.findText(model_name)
+                        index = self.viewArea.model_dropdown.findText(
+                            model_name)
                         if index >= 0:
-                            print(f"DEBUG: Setting viewArea model dropdown to {model_name}")
+                            print(
+                                f"DEBUG: Setting viewArea model dropdown to {model_name}")
                             self.viewArea.model_dropdown.blockSignals(True)
                             self.viewArea.model_dropdown.setCurrentIndex(index)
                             self.viewArea.model_dropdown.blockSignals(False)
                             self.viewArea.current_model = model_name
-                    
+
                     print(f"DEBUG: Sending image_data_loaded message")
-                    pub.sendMessage("image_data_loaded", image_data=self.image_data)
+                    pub.sendMessage("image_data_loaded",
+                                    image_data=self.image_data)
 
                 # Load tracking data if available
                 tracking_loaded = False
@@ -299,8 +327,7 @@ class App(QMainWindow):
                 traceback.print_exc()
                 QMessageBox.warning(
                     self, "Error", f"Failed to load project: {str(e)}")
-            
-    
+
     def load_nd2_file(self, file_path):
         self.image_data = ImageData.load_nd2(file_path)
         self.init_controls_nd2(file_path)
@@ -2836,12 +2863,25 @@ class App(QMainWindow):
             #             pixelformat='yuv444p')
 
     def init_ui(self):
-        # Initialize tabs as QWidget
+        """Initialize UI based on analysis mode"""
+        # Create different tab configurations based on analysis mode
+        if self.current_analysis_mode == AnalysisMode.SINGLE_CELL:
+            self.init_single_cell_tabs()
+            # Single cell specific initialization
+            self.initMorphologyTimeTab()
+            self.initMorphologyVisualizationTab()
+        elif self.current_analysis_mode == AnalysisMode.BIOFILM_CLOUD:
+            self.init_biofilm_cloud_tabs()
 
+        # Initialize menu bar
+        self.initMenuBar()
+
+    def init_single_cell_tabs(self):
+        """Initialize tabs for single cell analysis mode (current functionality)"""
+        # Initialize tabs as QWidget
         self.segmentation_tab = SegmentationWidget()
         self.populationTab = PopulationWidget()
         self.morphologyTab = MorphologyWidget()
-
         self.morphologyVisualizationTab = QWidget()
         self.tracking_manager = TrackingManager()
 
@@ -2851,12 +2891,33 @@ class App(QMainWindow):
         self.tab_widget.addTab(self.morphology_widget, "Morphology")
         self.tab_widget.addTab(self.tracking_manager,
                                "Tracking - Lineage Tree")
-        # self.tab_widget.addTab(self.morphologyVisualizationTab, "Morphology Visualization")
 
-        # self.initMorphologyTab()
-        self.initMorphologyTimeTab()
-        self.initMorphologyVisualizationTab()
-        self.initMenuBar()
+    def init_biofilm_cloud_tabs(self):
+        """Initialize tabs for biofilm cloud analysis mode (placeholder for now)"""
+        # For now, create placeholder tabs - we'll implement these in later tasks
+        self.segmentation_tab = SegmentationWidget()  # Same segmentation
+
+        # Placeholder biofilm tabs (we'll implement these in future tasks)
+        placeholder_tab1 = QWidget()
+        placeholder_tab1_layout = QVBoxLayout(placeholder_tab1)
+        placeholder_tab1_layout.addWidget(
+            QLabel("Biofilm Cloud Dynamics - Coming Soon"))
+
+        placeholder_tab2 = QWidget()
+        placeholder_tab2_layout = QVBoxLayout(placeholder_tab2)
+        placeholder_tab2_layout.addWidget(
+            QLabel("Colony Tracking - Coming Soon"))
+
+        placeholder_tab3 = QWidget()
+        placeholder_tab3_layout = QVBoxLayout(placeholder_tab3)
+        placeholder_tab3_layout.addWidget(
+            QLabel("Spatial Analysis - Coming Soon"))
+
+        # Add tabs to the QTabWidget
+        self.tab_widget.addTab(self.segmentation_tab, "Segmentation")
+        self.tab_widget.addTab(placeholder_tab1, "Cloud Dynamics")
+        self.tab_widget.addTab(placeholder_tab2, "Colony Tracking")
+        self.tab_widget.addTab(placeholder_tab3, "Spatial Analysis")
 
     def initMenuBar(self):
         # Create the menu bar
@@ -2907,7 +2968,6 @@ class App(QMainWindow):
 
     # In your main App class (app.py)
 
-    
     def save_to_folder(self):
         """Save the current project to a folder"""
         folder_path = QFileDialog.getExistingDirectory(
@@ -2927,11 +2987,13 @@ class App(QMainWindow):
                 current_model = cache.model_name
                 print(f"DEBUG: Saving project with segmentation cache")
                 print(f"DEBUG: Current model: {current_model}")
-                
+
                 if current_model and current_model in cache.mmap_arrays_idx:
                     _, indices = cache.mmap_arrays_idx[current_model]
-                    print(f"DEBUG: Cache contains {len(indices)} segmented frames for model {current_model}")
-                    print(f"DEBUG: Sample indices: {list(indices)[:5] if indices else 'None'}")
+                    print(
+                        f"DEBUG: Cache contains {len(indices)} segmented frames for model {current_model}")
+                    print(
+                        f"DEBUG: Sample indices: {list(indices)[:5] if indices else 'None'}")
                 else:
                     print(f"DEBUG: No cached frames for model {current_model}")
 
@@ -2955,10 +3017,11 @@ class App(QMainWindow):
                 print(f"ERROR: Failed to save metrics: {str(e)}")
                 import traceback
                 traceback.print_exc()
-                
+
             population_saved = False
             if hasattr(self, "populationTab"):
-                population_saved = self.populationTab.save_population_data(folder_path)
+                population_saved = self.populationTab.save_population_data(
+                    folder_path)
                 print(f"Population data saved: {population_saved}")
 
             # Save tracking data
@@ -2972,8 +3035,7 @@ class App(QMainWindow):
                 f"Project saved to {folder_path}" +
                 ("\nIncludes tracking data" if tracking_saved else "")
             )
-    
-    
+
     def load_from_folder(self):
         """Load a project from a folder"""
         folder_path = QFileDialog.getExistingDirectory(
@@ -2995,10 +3057,11 @@ class App(QMainWindow):
                 if hasattr(self, "viewArea"):
                     pub.sendMessage("image_data_loaded",
                                     image_data=self.image_data)
-                    
+
                 population_loaded = False
                 if hasattr(self, "populationTab"):
-                    population_loaded = self.populationTab.load_population_data(folder_path)
+                    population_loaded = self.populationTab.load_population_data(
+                        folder_path)
                     print(f"Population data loaded: {population_loaded}")
 
                 # Load tracking data if available

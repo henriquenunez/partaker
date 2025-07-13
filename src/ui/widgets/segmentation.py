@@ -1,9 +1,13 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-                               QComboBox, QSpinBox, QProgressBar, QGroupBox, QCheckBox,
-                               QListWidget, QAbstractItemView)
-from PySide6.QtCore import Qt, Slot, QTimer
+from ..colony_separator import ColonySeparator
+from PySide6.QtWidgets import (QGroupBox, QVBoxLayout, QHBoxLayout, QLabel, 
+                               QSlider, QPushButton, QSpinBox, QCheckBox,
+                               QFrame, QSplitter, QWidget, QComboBox, QAbstractItemView, QListWidget, QProgressBar)
+from PySide6.QtCore import Qt, QTimer
 from pubsub import pub
 import numpy as np
+from ..analysis_mode import AnalysisMode, AnalysisModeConfig
+from config.biofilm_config import BiofilmConfig
+from ..colony_analysis import ColonyGrouper, ColonyTracker
 
 
 class SegmentationWidget(QWidget):
@@ -14,7 +18,6 @@ class SegmentationWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Initialize state variables
         self.current_model = None
         self.time_range = (0, 0)
         self.positions = []
@@ -23,6 +26,17 @@ class SegmentationWidget(QWidget):
         self.is_segmenting = False
         self.queue = []
         self.processed_frames = set()
+        
+        # Add biofilm analysis components
+        self.analysis_config = AnalysisModeConfig()
+        self.biofilm_config = BiofilmConfig()
+        self.colony_grouper = None
+        self.colony_tracker = None
+        
+        # Add colony separator
+        self.colony_separator = ColonySeparator()
+        self.current_segmented_image = None
+        self.colony_overlay_visible = False
 
         # Set up the UI
         self.init_ui()
@@ -48,7 +62,11 @@ class SegmentationWidget(QWidget):
         model_group.setLayout(model_layout)
         layout.addWidget(model_group)
 
-        # Position selection
+        # Add biofilm configuration if in biofilm mode
+        if self.analysis_config.is_biofilm_mode():
+            self.add_biofilm_configuration_panel(layout)
+
+        # Position selection (existing code)
         position_group = QGroupBox("Positions")
         position_layout = QVBoxLayout()
 
@@ -111,6 +129,14 @@ class SegmentationWidget(QWidget):
         controls_layout = QHBoxLayout()
         self.segment_button = QPushButton("Segment Selected")
         self.segment_button.clicked.connect(self.start_segmentation)
+        
+        # Add colony analysis button if in biofilm mode
+        if self.analysis_config.is_biofilm_mode():
+            self.analyze_colonies_button = QPushButton("Analyze Colonies")
+            self.analyze_colonies_button.clicked.connect(self.analyze_biofilm_colonies)
+            self.analyze_colonies_button.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+            controls_layout.addWidget(self.analyze_colonies_button)
+        
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.cancel_segmentation)
         self.cancel_button.setEnabled(False)
@@ -270,6 +296,17 @@ class SegmentationWidget(QWidget):
 
     def on_image_ready(self, image, time, position, channel, mode):
         """Handle segmented image ready event"""
+        
+        # Store the segmented image for colony detection (ADD THIS)
+        if mode == "segmented" and hasattr(self, 'analysis_config'):
+            self.current_segmented_image = image
+            
+            # Enable colony detection if we're in biofilm mode (ADD THIS)
+            if self.analysis_config.is_biofilm_mode():
+                if hasattr(self, 'detect_colonies_btn'):
+                    self.detect_colonies_btn.setEnabled(True)
+        
+        # KEEP ALL EXISTING CODE BELOW
         if not self.is_segmenting:
             return
 
@@ -299,6 +336,7 @@ class SegmentationWidget(QWidget):
 
         # Schedule next processing with a small delay
         self.request_timer.start(50)  # 50ms delay
+    
 
     def cancel_segmentation(self):
         """Cancel the segmentation process"""
@@ -321,3 +359,394 @@ class SegmentationWidget(QWidget):
                         time_range=self.time_range,
                         positions=self.positions,
                         model=self.current_model)
+        
+
+    def add_biofilm_configuration_panel(self, layout):
+        """Add biofilm-specific configuration panel"""
+        biofilm_group = QGroupBox("Biofilm Analysis Configuration")
+        biofilm_layout = QVBoxLayout()
+        
+        # Colony separation section
+        self.add_colony_separation_section(biofilm_layout)
+        
+        # Add separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        biofilm_layout.addWidget(separator)
+        
+        # Colony grouping parameters
+        grouping_layout = QHBoxLayout()
+        
+        grouping_layout.addWidget(QLabel("Connection Distance:"))
+        self.connection_distance_spin = QSpinBox()
+        self.connection_distance_spin.setMinimum(1)
+        self.connection_distance_spin.setMaximum(100)
+        self.connection_distance_spin.setValue(self.biofilm_config.get_setting("colony_grouping", "connection_distance", 10))
+        self.connection_distance_spin.setSuffix(" pixels")
+        grouping_layout.addWidget(self.connection_distance_spin)
+        
+        grouping_layout.addWidget(QLabel("Min Colony Size:"))
+        self.min_colony_size_spin = QSpinBox()
+        self.min_colony_size_spin.setMinimum(1)
+        self.min_colony_size_spin.setMaximum(1000)
+        self.min_colony_size_spin.setValue(self.biofilm_config.get_setting("colony_grouping", "min_colony_size", 5))
+        self.min_colony_size_spin.setSuffix(" cells")
+        grouping_layout.addWidget(self.min_colony_size_spin)
+        
+        biofilm_layout.addLayout(grouping_layout)
+        
+        # Tracking parameters
+        tracking_layout = QHBoxLayout()
+        
+        tracking_layout.addWidget(QLabel("Max Displacement:"))
+        self.max_displacement_spin = QSpinBox()
+        self.max_displacement_spin.setMinimum(1)
+        self.max_displacement_spin.setMaximum(200)
+        self.max_displacement_spin.setValue(self.biofilm_config.get_setting("colony_tracking", "max_displacement", 50))
+        self.max_displacement_spin.setSuffix(" pixels")
+        tracking_layout.addWidget(self.max_displacement_spin)
+        
+        tracking_layout.addWidget(QLabel("Overlap Threshold:"))
+        self.overlap_threshold_spin = QSpinBox()
+        self.overlap_threshold_spin.setMinimum(10)
+        self.overlap_threshold_spin.setMaximum(90)
+        self.overlap_threshold_spin.setValue(int(self.biofilm_config.get_setting("colony_tracking", "overlap_threshold", 0.3) * 100))
+        self.overlap_threshold_spin.setSuffix("%")
+        tracking_layout.addWidget(self.overlap_threshold_spin)
+        
+        biofilm_layout.addLayout(tracking_layout)
+        
+        # Configuration presets
+        preset_layout = QHBoxLayout()
+        preset_layout.addWidget(QLabel("Presets:"))
+        
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems([
+            "Custom",
+            "Fast Growing Biofilms", 
+            "Mature Biofilms",
+            "Microcolonies",
+            "Sparse Colonies"
+        ])
+        self.preset_combo.currentTextChanged.connect(self.apply_configuration_preset)
+        preset_layout.addWidget(self.preset_combo)
+        
+        biofilm_layout.addLayout(preset_layout)
+        
+        biofilm_group.setLayout(biofilm_layout)
+        layout.addWidget(biofilm_group)
+        
+    def add_colony_separation_section(self, layout):
+        """Add BiofilmQ-style colony separation interface"""
+        
+        # Colony Separation Header
+        colony_sep_label = QLabel("Colony Separation")
+        colony_sep_label.setStyleSheet("font-weight: bold; font-size: 12px; color: #2196F3;")
+        layout.addWidget(colony_sep_label)
+        
+        # Detection parameters
+        detection_layout = QHBoxLayout()
+        
+        # Intensity threshold slider
+        detection_layout.addWidget(QLabel("Intensity Threshold:"))
+        self.intensity_threshold_slider = QSlider(Qt.Horizontal)
+        self.intensity_threshold_slider.setMinimum(1)
+        self.intensity_threshold_slider.setMaximum(100)
+        self.intensity_threshold_slider.setValue(50)
+        self.intensity_threshold_slider.valueChanged.connect(self.on_intensity_threshold_changed)
+        detection_layout.addWidget(self.intensity_threshold_slider)
+        
+        self.intensity_threshold_label = QLabel("0.50")
+        self.intensity_threshold_label.setMinimumWidth(40)
+        detection_layout.addWidget(self.intensity_threshold_label)
+        
+        layout.addLayout(detection_layout)
+        
+        # Size filtering
+        size_layout = QHBoxLayout()
+        
+        size_layout.addWidget(QLabel("Min Colony Size:"))
+        self.min_size_slider = QSlider(Qt.Horizontal)
+        self.min_size_slider.setMinimum(10)
+        self.min_size_slider.setMaximum(1000)
+        self.min_size_slider.setValue(100)
+        self.min_size_slider.valueChanged.connect(self.on_min_size_changed)
+        size_layout.addWidget(self.min_size_slider)
+        
+        self.min_size_label = QLabel("100")
+        self.min_size_label.setMinimumWidth(40)
+        size_layout.addWidget(self.min_size_label)
+        
+        size_layout.addWidget(QLabel("Max Size:"))
+        self.max_size_slider = QSlider(Qt.Horizontal)
+        self.max_size_slider.setMinimum(1000)
+        self.max_size_slider.setMaximum(50000)
+        self.max_size_slider.setValue(10000)
+        self.max_size_slider.valueChanged.connect(self.on_max_size_changed)
+        size_layout.addWidget(self.max_size_slider)
+        
+        self.max_size_label = QLabel("10000")
+        self.max_size_label.setMinimumWidth(50)
+        size_layout.addWidget(self.max_size_label)
+        
+        layout.addLayout(size_layout)
+        
+        # Control buttons
+        control_layout = QHBoxLayout()
+        
+        self.detect_colonies_btn = QPushButton("Detect Colonies")
+        self.detect_colonies_btn.clicked.connect(self.detect_colonies)
+        self.detect_colonies_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        control_layout.addWidget(self.detect_colonies_btn)
+        
+        self.show_overlay_btn = QPushButton("Show/Hide Overlay")
+        self.show_overlay_btn.clicked.connect(self.toggle_colony_overlay)
+        self.show_overlay_btn.setEnabled(False)
+        control_layout.addWidget(self.show_overlay_btn)
+        
+        self.clear_colonies_btn = QPushButton("Clear All")
+        self.clear_colonies_btn.clicked.connect(self.clear_all_colonies)
+        control_layout.addWidget(self.clear_colonies_btn)
+        
+        layout.addLayout(control_layout)
+        
+        # Colony count display
+        self.colony_count_label = QLabel("Colonies detected: 0")
+        self.colony_count_label.setStyleSheet("font-weight: bold; color: #666;")
+        layout.addWidget(self.colony_count_label)
+        
+    def apply_configuration_preset(self, preset_name):
+        """Apply predefined configuration presets"""
+        if preset_name == "Custom":
+            return
+        
+        presets = {
+            "Fast Growing Biofilms": {
+                "connection_distance": 15,
+                "min_colony_size": 8,
+                "max_displacement": 60,
+                "overlap_threshold": 0.4
+            },
+            "Mature Biofilms": {
+                "connection_distance": 8,
+                "min_colony_size": 15,
+                "max_displacement": 30,
+                "overlap_threshold": 0.5
+            },
+            "Microcolonies": {
+                "connection_distance": 5,
+                "min_colony_size": 3,
+                "max_displacement": 25,
+                "overlap_threshold": 0.2
+            },
+            "Sparse Colonies": {
+                "connection_distance": 20,
+                "min_colony_size": 5,
+                "max_displacement": 80,
+                "overlap_threshold": 0.3
+            }
+        }
+        
+        if preset_name in presets:
+            config = presets[preset_name]
+            self.connection_distance_spin.setValue(config["connection_distance"])
+            self.min_colony_size_spin.setValue(config["min_colony_size"])
+            self.max_displacement_spin.setValue(config["max_displacement"])
+            self.overlap_threshold_spin.setValue(int(config["overlap_threshold"] * 100))
+
+    
+    def analyze_biofilm_colonies(self):
+        """Analyze colonies from existing segmentation data"""
+        from metrics_service import MetricsService
+        
+        # Get selected positions
+        selected_positions = self.get_selected_positions()
+        if not selected_positions:
+            self.progress_label.setText("No positions selected. Please select positions first.")
+            return
+        
+        # Get current configuration
+        connection_distance = self.connection_distance_spin.value()
+        min_colony_size = self.min_colony_size_spin.value()
+        max_displacement = self.max_displacement_spin.value()
+        overlap_threshold = self.overlap_threshold_spin.value() / 100.0
+        
+        # Update biofilm config
+        self.biofilm_config.set_setting("colony_grouping", "connection_distance", connection_distance)
+        self.biofilm_config.set_setting("colony_grouping", "min_colony_size", min_colony_size)
+        self.biofilm_config.set_setting("colony_tracking", "max_displacement", max_displacement)
+        self.biofilm_config.set_setting("colony_tracking", "overlap_threshold", overlap_threshold)
+        
+        # Initialize colony analysis tools
+        self.colony_grouper = ColonyGrouper(
+            connection_distance=connection_distance,
+            min_colony_size=min_colony_size
+        )
+        self.colony_tracker = ColonyTracker(
+            max_displacement=max_displacement,
+            overlap_threshold=overlap_threshold
+        )
+        
+        # Get cell data from MetricsService
+        metrics_service = MetricsService()
+        
+        # Process each time point and position
+        time_start = self.time_start_spin.value()
+        time_end = self.time_end_spin.value()
+        
+        # Get channel index safely
+        channel = 0
+        if hasattr(self, 'channel_combo') and self.channel_combo.count() > 0:
+            channel = self.channel_combo.currentIndex()
+        
+        self.progress_label.setText("Analyzing biofilm colonies...")
+        self.progress_bar.setValue(0)
+        
+        total_frames = len(selected_positions) * (time_end - time_start + 1)
+        processed_frames = 0
+        
+        colony_data_by_time = {}
+        
+        print(f"Starting colony analysis for positions {selected_positions}, times {time_start}-{time_end}, channel {channel}")
+        
+        for position in selected_positions:
+            for time in range(time_start, time_end + 1):
+                # Get cell data for this frame
+                cell_data = metrics_service.get_cell_data(position=position, time=time, channel=channel)
+                
+                if not cell_data.is_empty():
+                    print(f"Processing T:{time} P:{position} - found {len(cell_data)} cells")
+                    
+                    # Group cells into colonies
+                    colonies = self.colony_grouper.group_cells_into_colonies(cell_data)
+                    print(f"Found {len(colonies)} colonies")
+                    
+                    # Store colony data in MetricsService
+                    for colony in colonies:
+                        metrics_service.add_colony_metrics(colony)
+                    
+                    # Collect for tracking
+                    if time not in colony_data_by_time:
+                        colony_data_by_time[time] = []
+                    colony_data_by_time[time].extend(colonies)
+                else:
+                    print(f"No cell data found for T:{time} P:{position} C:{channel}")
+                
+                processed_frames += 1
+                progress = int((processed_frames / total_frames) * 100)
+                self.progress_bar.setValue(progress)
+        
+        # Track colonies over time
+        if colony_data_by_time:
+            print(f"Tracking colonies across {len(colony_data_by_time)} time points")
+            colony_tracks = self.colony_tracker.track_colonies_over_time(colony_data_by_time)
+            
+            # Update metrics dataframe
+            metrics_service._update_dataframe()
+            
+            self.progress_label.setText(f"Analysis complete! Found {len(colony_tracks)} colony tracks.")
+            print(f"Colony analysis complete: {len(colony_tracks)} tracks found")
+            
+            # Print some details about the tracks
+            for track in colony_tracks[:5]:  # Show first 5 tracks
+                track_data = track["dynamics"]
+                print(f"Track {track['track_id']}: {track_data['track_length']} frames, displacement: {track_data['total_displacement']:.1f}px, growth: {track_data['growth_rate']:.2f}")
+        else:
+            self.progress_label.setText("No colonies found. Check segmentation and parameters.")
+            print("No colony data found")
+        
+        self.progress_bar.setValue(100)
+        
+    def get_selected_positions(self):
+        """Get list of selected positions from the position list widget"""
+        selected_positions = []
+        for i in range(self.position_list.count()):
+            item = self.position_list.item(i)
+            if item.isSelected():
+                # Extract position number from item text (e.g., "Position 0" -> 0)
+                position_text = item.text()
+                if "Position" in position_text:
+                    try:
+                        position_num = int(position_text.split()[-1])
+                        selected_positions.append(position_num)
+                    except (ValueError, IndexError):
+                        print(f"Warning: Could not parse position from '{position_text}'")
+        
+        return selected_positions
+    
+    
+    
+    def on_intensity_threshold_changed(self, value):
+        """Handle intensity threshold slider change"""
+        threshold = value / 100.0
+        self.intensity_threshold_label.setText(f"{threshold:.2f}")
+        self.colony_separator.update_parameters(intensity_threshold=threshold)
+
+    def on_min_size_changed(self, value):
+        """Handle minimum size slider change"""
+        self.min_size_label.setText(str(value))
+        self.colony_separator.update_parameters(min_colony_size=value)
+
+    def on_max_size_changed(self, value):
+        """Handle maximum size slider change"""
+        self.max_size_label.setText(str(value))
+        self.colony_separator.update_parameters(max_colony_size=value)
+
+    def detect_colonies(self):
+        """Detect colonies from current segmented image"""
+        # Get current segmented image
+        if self.current_segmented_image is None:
+            # Try to get segmented image from ViewArea
+            self.progress_label.setText("No segmented image available. Run segmentation first.")
+            return
+        
+        # Detect colonies
+        colonies = self.colony_separator.detect_colonies_from_segmentation(self.current_segmented_image)
+        
+        # Update UI
+        self.colony_count_label.setText(f"Colonies detected: {len(colonies)}")
+        self.show_overlay_btn.setEnabled(len(colonies) > 0)
+        
+        if len(colonies) > 0:
+            self.progress_label.setText(f"Detected {len(colonies)} colonies. Use overlay to verify.")
+            
+            # Automatically show overlay
+            self.colony_overlay_visible = True
+            self.update_colony_overlay()
+            
+            # Print colony information
+            print(f"\nDetected {len(colonies)} colonies:")
+            for colony in colonies:
+                print(f"Colony {colony['colony_id']}: Area={colony['area']}, "
+                    f"Center=({colony['centroid'][1]:.1f}, {colony['centroid'][0]:.1f}), "
+                    f"BBox=({colony['bbox'][0]}, {colony['bbox'][1]}, {colony['bbox'][2]}, {colony['bbox'][3]})")
+        else:
+            self.progress_label.setText("No colonies detected. Adjust thresholds and try again.")
+
+    def toggle_colony_overlay(self):
+        """Toggle colony overlay visibility"""
+        self.colony_overlay_visible = not self.colony_overlay_visible
+        self.update_colony_overlay()
+
+    def update_colony_overlay(self):
+        """Update colony overlay in the view"""
+        if self.current_segmented_image is not None and self.colony_overlay_visible:
+            # Create overlay
+            overlay = self.colony_separator.create_colony_overlay(self.current_segmented_image.shape)
+            
+            # Send overlay to ViewArea
+            pub.sendMessage("show_colony_overlay", overlay=overlay)
+        else:
+            # Hide overlay
+            pub.sendMessage("hide_colony_overlay")
+
+    def clear_all_colonies(self):
+        """Clear all detected colonies"""
+        self.colony_separator.detected_colonies = []
+        self.colony_separator.manual_additions = []
+        self.colony_count_label.setText("Colonies detected: 0")
+        self.show_overlay_btn.setEnabled(False)
+        self.colony_overlay_visible = False
+        self.update_colony_overlay()
+        self.progress_label.setText("All colonies cleared.")
