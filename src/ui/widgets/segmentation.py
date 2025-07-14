@@ -1,13 +1,13 @@
-from ..colony_separator import ColonySeparator
+from ..biofilms.colony_separator import ColonySeparator
 from PySide6.QtWidgets import (QGroupBox, QVBoxLayout, QHBoxLayout, QLabel, 
                                QSlider, QPushButton, QSpinBox, QCheckBox,
-                               QFrame, QSplitter, QWidget, QComboBox, QAbstractItemView, QListWidget, QProgressBar)
+                               QFrame, QSplitter, QWidget, QComboBox, QAbstractItemView, QListWidget, QProgressBar, QRadioButton)
 from PySide6.QtCore import Qt, QTimer
 from pubsub import pub
 import numpy as np
-from ..analysis_mode import AnalysisMode, AnalysisModeConfig
-from config.biofilm_config import BiofilmConfig
-from ..colony_analysis import ColonyGrouper, ColonyTracker
+from ..biofilms.analysis_mode import AnalysisMode, AnalysisModeConfig
+from ..biofilms.config.biofilm_config import BiofilmConfig
+from ..biofilms.colony_analysis import ColonyGrouper, ColonyTracker
 
 
 class SegmentationWidget(QWidget):
@@ -294,17 +294,22 @@ class SegmentationWidget(QWidget):
         # Update status
         self.progress_label.setText(f"Processing T={time}, P={position}")
 
+    
     def on_image_ready(self, image, time, position, channel, mode):
-        """Handle segmented image ready event"""
+        """Handle when images are ready"""
         
-        # Store the segmented image for colony detection (ADD THIS)
-        if mode == "segmented" and hasattr(self, 'analysis_config'):
-            self.current_segmented_image = image
+        # Store raw image for colony detection
+        if mode == "normal" and hasattr(self, 'analysis_config'):
+            self.current_raw_image = image
             
-            # Enable colony detection if we're in biofilm mode (ADD THIS)
+            # Enable colony detection if we're in biofilm mode
             if self.analysis_config.is_biofilm_mode():
                 if hasattr(self, 'detect_colonies_btn'):
                     self.detect_colonies_btn.setEnabled(True)
+        
+        # Store segmented image for other analysis
+        if mode == "segmented" and hasattr(self, 'analysis_config'):
+            self.current_segmented_image = image
         
         # KEEP ALL EXISTING CODE BELOW
         if not self.is_segmenting:
@@ -452,12 +457,12 @@ class SegmentationWidget(QWidget):
         detection_layout.addWidget(QLabel("Intensity Threshold:"))
         self.intensity_threshold_slider = QSlider(Qt.Horizontal)
         self.intensity_threshold_slider.setMinimum(1)
-        self.intensity_threshold_slider.setMaximum(100)
-        self.intensity_threshold_slider.setValue(50)
+        self.intensity_threshold_slider.setMaximum(99)
+        self.intensity_threshold_slider.setValue(20)
         self.intensity_threshold_slider.valueChanged.connect(self.on_intensity_threshold_changed)
         detection_layout.addWidget(self.intensity_threshold_slider)
         
-        self.intensity_threshold_label = QLabel("0.50")
+        self.intensity_threshold_label = QLabel("0.20")
         self.intensity_threshold_label.setMinimumWidth(40)
         detection_layout.addWidget(self.intensity_threshold_label)
         
@@ -468,9 +473,9 @@ class SegmentationWidget(QWidget):
         
         size_layout.addWidget(QLabel("Min Colony Size:"))
         self.min_size_slider = QSlider(Qt.Horizontal)
-        self.min_size_slider.setMinimum(10)
-        self.min_size_slider.setMaximum(1000)
-        self.min_size_slider.setValue(100)
+        self.min_size_slider.setMinimum(500)
+        self.min_size_slider.setMaximum(10000)
+        self.min_size_slider.setValue(1000)
         self.min_size_slider.valueChanged.connect(self.on_min_size_changed)
         size_layout.addWidget(self.min_size_slider)
         
@@ -480,9 +485,9 @@ class SegmentationWidget(QWidget):
         
         size_layout.addWidget(QLabel("Max Size:"))
         self.max_size_slider = QSlider(Qt.Horizontal)
-        self.max_size_slider.setMinimum(1000)
-        self.max_size_slider.setMaximum(50000)
-        self.max_size_slider.setValue(10000)
+        self.max_size_slider.setMinimum(10000)
+        self.max_size_slider.setMaximum(500000)
+        self.max_size_slider.setValue(100000) 
         self.max_size_slider.valueChanged.connect(self.on_max_size_changed)
         size_layout.addWidget(self.max_size_slider)
         
@@ -694,36 +699,36 @@ class SegmentationWidget(QWidget):
         self.colony_separator.update_parameters(max_colony_size=value)
 
     def detect_colonies(self):
-        """Detect colonies from current segmented image"""
-        # Get current segmented image
-        if self.current_segmented_image is None:
-            # Try to get segmented image from ViewArea
-            self.progress_label.setText("No segmented image available. Run segmentation first.")
+        """Detect colonies from current raw image (BiofilmQ approach)"""
+        # Get current raw image instead of segmented image
+        if not hasattr(self, 'current_raw_image') or self.current_raw_image is None:
+            self.progress_label.setText("No raw image available. Load image data first.")
             return
         
-        # Detect colonies
-        colonies = self.colony_separator.detect_colonies_from_segmentation(self.current_segmented_image)
+        # Detect colonies using raw image
+        colonies = self.colony_separator.detect_colonies_from_raw_image(self.current_raw_image)
         
         # Update UI
         self.colony_count_label.setText(f"Colonies detected: {len(colonies)}")
         self.show_overlay_btn.setEnabled(len(colonies) > 0)
         
         if len(colonies) > 0:
-            self.progress_label.setText(f"Detected {len(colonies)} colonies. Use overlay to verify.")
+            self.progress_label.setText(f"Detected {len(colonies)} major biofilm colonies.")
             
             # Automatically show overlay
             self.colony_overlay_visible = True
             self.update_colony_overlay()
             
             # Print colony information
-            print(f"\nDetected {len(colonies)} colonies:")
+            print(f"\nDetected {len(colonies)} biofilm colonies:")
             for colony in colonies:
-                print(f"Colony {colony['colony_id']}: Area={colony['area']}, "
-                    f"Center=({colony['centroid'][1]:.1f}, {colony['centroid'][0]:.1f}), "
-                    f"BBox=({colony['bbox'][0]}, {colony['bbox'][1]}, {colony['bbox'][2]}, {colony['bbox'][3]})")
+                print(f"Colony {colony['colony_id']}: Area={colony['area']:.0f} pixels, "
+                    f"Center=({colony['centroid'][0]:.1f}, {colony['centroid'][1]:.1f})")
         else:
-            self.progress_label.setText("No colonies detected. Adjust thresholds and try again.")
-
+            self.progress_label.setText("No major biofilm colonies detected. Adjust intensity threshold.")
+            
+            
+    
     def toggle_colony_overlay(self):
         """Toggle colony overlay visibility"""
         self.colony_overlay_visible = not self.colony_overlay_visible
@@ -750,3 +755,181 @@ class SegmentationWidget(QWidget):
         self.colony_overlay_visible = False
         self.update_colony_overlay()
         self.progress_label.setText("All colonies cleared.")
+        
+        
+    def add_colony_separation_section(self, layout):
+        """Add BiofilmQ-style colony separation interface with manual tools"""
+        
+        # Colony Separation Header
+        colony_sep_label = QLabel("Colony Separation")
+        colony_sep_label.setStyleSheet("font-weight: bold; font-size: 12px; color: #2196F3;")
+        layout.addWidget(colony_sep_label)
+        
+        # Mode selection
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Selection Mode:"))
+        
+        self.auto_mode_radio = QRadioButton("Automatic")
+        self.manual_mode_radio = QRadioButton("Manual")
+        self.manual_mode_radio.setChecked(True)  # Default to manual
+        
+        mode_layout.addWidget(self.auto_mode_radio)
+        mode_layout.addWidget(self.manual_mode_radio)
+        layout.addLayout(mode_layout)
+        
+        # Automatic detection parameters (only shown in auto mode)
+        self.auto_params_widget = QWidget()
+        auto_params_layout = QVBoxLayout(self.auto_params_widget)
+        
+        # Detection parameters
+        detection_layout = QHBoxLayout()
+        detection_layout.addWidget(QLabel("Intensity Threshold:"))
+        self.intensity_threshold_slider = QSlider(Qt.Horizontal)
+        self.intensity_threshold_slider.setMinimum(1)
+        self.intensity_threshold_slider.setMaximum(99)
+        self.intensity_threshold_slider.setValue(20)
+        self.intensity_threshold_slider.valueChanged.connect(self.on_intensity_threshold_changed)
+        detection_layout.addWidget(self.intensity_threshold_slider)
+        
+        self.intensity_threshold_label = QLabel("0.20")
+        self.intensity_threshold_label.setMinimumWidth(40)
+        detection_layout.addWidget(self.intensity_threshold_label)
+        auto_params_layout.addLayout(detection_layout)
+        
+        # Size filtering
+        size_layout = QHBoxLayout()
+        size_layout.addWidget(QLabel("Min Colony Size:"))
+        self.min_size_slider = QSlider(Qt.Horizontal)
+        self.min_size_slider.setMinimum(500)
+        self.min_size_slider.setMaximum(10000)
+        self.min_size_slider.setValue(1000)
+        self.min_size_slider.valueChanged.connect(self.on_min_size_changed)
+        size_layout.addWidget(self.min_size_slider)
+        
+        self.min_size_label = QLabel("1000")
+        self.min_size_label.setMinimumWidth(40)
+        size_layout.addWidget(self.min_size_label)
+        
+        size_layout.addWidget(QLabel("Max Size:"))
+        self.max_size_slider = QSlider(Qt.Horizontal)
+        self.max_size_slider.setMinimum(10000)
+        self.max_size_slider.setMaximum(500000)
+        self.max_size_slider.setValue(100000)
+        self.max_size_slider.valueChanged.connect(self.on_max_size_changed)
+        size_layout.addWidget(self.max_size_slider)
+        
+        self.max_size_label = QLabel("100000")
+        self.max_size_label.setMinimumWidth(50)
+        size_layout.addWidget(self.max_size_label)
+        auto_params_layout.addLayout(size_layout)
+        
+        layout.addWidget(self.auto_params_widget)
+        
+        # Manual selection instructions
+        self.manual_instructions = QLabel("Manual Mode: Click on image to draw polygons around biofilm colonies")
+        self.manual_instructions.setStyleSheet("color: #666; font-style: italic;")
+        layout.addWidget(self.manual_instructions)
+        
+        # Control buttons
+        control_layout = QHBoxLayout()
+        
+        self.detect_colonies_btn = QPushButton("Auto Detect")
+        self.detect_colonies_btn.clicked.connect(self.detect_colonies)
+        self.detect_colonies_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        control_layout.addWidget(self.detect_colonies_btn)
+        
+        self.start_manual_btn = QPushButton("Start Manual Selection")
+        self.start_manual_btn.clicked.connect(self.start_manual_selection)
+        self.start_manual_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        control_layout.addWidget(self.start_manual_btn)
+        
+        self.finish_polygon_btn = QPushButton("Finish Polygon")
+        self.finish_polygon_btn.clicked.connect(self.finish_current_polygon)
+        self.finish_polygon_btn.setEnabled(False)
+        control_layout.addWidget(self.finish_polygon_btn)
+        
+        self.cancel_polygon_btn = QPushButton("Cancel Polygon")
+        self.cancel_polygon_btn.clicked.connect(self.cancel_current_polygon)
+        self.cancel_polygon_btn.setEnabled(False)
+        control_layout.addWidget(self.cancel_polygon_btn)
+        
+        layout.addLayout(control_layout)
+        
+        # Second row of buttons
+        control_layout2 = QHBoxLayout()
+        
+        self.show_overlay_btn = QPushButton("Show/Hide Overlay")
+        self.show_overlay_btn.clicked.connect(self.toggle_colony_overlay)
+        self.show_overlay_btn.setEnabled(False)
+        control_layout2.addWidget(self.show_overlay_btn)
+        
+        self.clear_colonies_btn = QPushButton("Clear All")
+        self.clear_colonies_btn.clicked.connect(self.clear_all_colonies)
+        control_layout2.addWidget(self.clear_colonies_btn)
+        
+        layout.addLayout(control_layout2)
+        
+        # Colony count display
+        self.colony_count_label = QLabel("Colonies detected: 0")
+        self.colony_count_label.setStyleSheet("font-weight: bold; color: #666;")
+        layout.addWidget(self.colony_count_label)
+        
+        # Connect mode change signals
+        self.auto_mode_radio.toggled.connect(self.on_mode_changed)
+        self.manual_mode_radio.toggled.connect(self.on_mode_changed)
+        
+        # Set initial mode
+        self.on_mode_changed()
+        
+        
+        
+    def on_mode_changed(self):
+        """Handle mode change between automatic and manual"""
+        auto_mode = self.auto_mode_radio.isChecked()
+        
+        # Show/hide automatic parameters
+        self.auto_params_widget.setVisible(auto_mode)
+        
+        # Update button visibility
+        self.detect_colonies_btn.setVisible(auto_mode)
+        self.start_manual_btn.setVisible(not auto_mode)
+        self.finish_polygon_btn.setVisible(not auto_mode)
+        self.cancel_polygon_btn.setVisible(not auto_mode)
+        
+        # Update instructions
+        if auto_mode:
+            self.manual_instructions.setText("Automatic Mode: Adjust parameters and click 'Auto Detect'")
+        else:
+            self.manual_instructions.setText("Manual Mode: Click 'Start Manual Selection', then click on image to draw polygons")
+
+    def start_manual_selection(self):
+        """Start manual colony selection mode"""
+        self.colony_separator.start_manual_selection()
+        self.start_manual_btn.setEnabled(False)
+        self.finish_polygon_btn.setEnabled(True)
+        self.cancel_polygon_btn.setEnabled(True)
+        
+        # Enable manual selection in ViewArea
+        pub.sendMessage("enable_manual_colony_selection")
+        
+        self.progress_label.setText("Click on image to draw polygon around biofilm colony")
+
+    def finish_current_polygon(self):
+        """Finish the current polygon"""
+        if hasattr(self, 'current_raw_image') and self.current_raw_image is not None:
+            colony = self.colony_separator.finish_current_polygon(self.current_raw_image.shape)
+            if colony:
+                self.update_colony_count()
+                self.update_colony_overlay()
+                self.progress_label.setText(f"Colony {colony['colony_id']} created. Start new polygon or finish selection.")
+
+    def cancel_current_polygon(self):
+        """Cancel the current polygon"""
+        self.colony_separator.cancel_current_polygon()
+        self.progress_label.setText("Polygon cancelled. Start new polygon or finish selection.")
+
+    def update_colony_count(self):
+        """Update the colony count display"""
+        colonies = self.colony_separator.get_all_colonies()
+        self.colony_count_label.setText(f"Colonies detected: {len(colonies)}")
+        self.show_overlay_btn.setEnabled(len(colonies) > 0)

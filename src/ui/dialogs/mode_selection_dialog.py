@@ -6,7 +6,7 @@ from PySide6.QtGui import QFont, QPixmap, QIcon
 import sys
 import os
 
-from ..analysis_mode import AnalysisMode, AnalysisModeConfig
+from ..biofilms.analysis_mode import AnalysisMode, AnalysisModeConfig
 
 class ModeSelectionDialog(QDialog):
     """Dialog for selecting analysis mode at startup"""

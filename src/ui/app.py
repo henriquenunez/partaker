@@ -43,9 +43,9 @@ from pubsub import pub
 
 from experiment import Experiment
 from metrics_service import MetricsService
-from ui.analysis_mode import AnalysisMode, AnalysisModeConfig
+from ui.biofilms.analysis_mode import AnalysisMode, AnalysisModeConfig
 from ui.dialogs.mode_selection_dialog import ModeSelectionDialog
-from config.biofilm_config import BiofilmConfig
+from ui.biofilms.config.biofilm_config import BiofilmConfig
 
 
 class MorphologyWorker(QObject):

@@ -25,8 +25,12 @@ class ViewAreaWidget(QWidget):
         self.current_t = 0
         self.current_p = 0
         self.current_c = 0
-        self.current_mode = "normal"  # normal, segmented, or labeled
+        self.current_mode = "normal"
         self.current_model = None
+        
+        # Add colony overlay support
+        self.colony_overlay = None
+        self.show_colony_overlay = False
 
         # Set up the UI
         self.init_ui()
@@ -35,11 +39,14 @@ class ViewAreaWidget(QWidget):
         pub.subscribe(self.on_image_data_loaded, "image_data_loaded")
         pub.subscribe(self.on_image_ready, "image_ready")
         pub.subscribe(self.highlight_cell, "highlight_cell_requested")
-
         pub.subscribe(self.provide_current_param, "get_current_t")
         pub.subscribe(self.provide_current_param, "get_current_p")
         pub.subscribe(self.provide_current_param, "get_current_c")
         pub.subscribe(self.on_segmentation_cache_miss, "segmentation_cache_miss")
+        
+        # Add colony overlay subscriptions
+        pub.subscribe(self.on_show_colony_overlay, "show_colony_overlay")
+        pub.subscribe(self.on_hide_colony_overlay, "hide_colony_overlay")
 
     def on_segmentation_cache_miss(self, time, position, channel, model):
         """Handle when cached segmentation is not available"""
@@ -253,100 +260,101 @@ class ViewAreaWidget(QWidget):
             self._display_processed_image(image, mode)
 
     def _display_raw_image(self, image):
-        """Display raw microscope image"""
-        # Make a copy to avoid modifying the original
-        self.current_image_data = image.copy()
-
-        # Handle grayscale images
-        if len(image.shape) == 2:
-            # Apply normalization if checkbox is checked
-            if self.normalize_checkbox.isChecked():
-                if image.dtype != np.uint16:
-                    image = (image.astype(np.float32) /
-                             image.max() * 65535).astype(np.uint16)
-
-                image = cv2.normalize(
-                    image, None, 0, 65535, cv2.NORM_MINMAX).astype(np.uint16)
+        """Display raw microscopy image with optional overlay"""
+        try:
+            # Normalize for display
+            if image.dtype != np.uint8:
+                # Normalize to 0-255 range
+                image_norm = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
             else:
-                # If not normalizing, ensure the image is in a suitable format
-                if image.dtype != np.uint16:
-                    # Scale to 16-bit range while preserving relative values
-                    image = image.astype(np.uint16)
+                image_norm = image
 
-            height, width = image.shape
-            bytes_per_line = image.strides[0]
-            fmt = QImage.Format_Grayscale16
+            # Convert to RGB for overlay support
+            if len(image_norm.shape) == 2:
+                display_image = cv2.cvtColor(image_norm, cv2.COLOR_GRAY2RGB)
+            else:
+                display_image = image_norm
 
-        else:  # Color
-            # Apply normalization if checkbox is checked
-            if self.normalize_checkbox.isChecked() and image.dtype != np.uint8:
-                image = cv2.normalize(
-                    image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            # Add colony overlay if enabled
+            if self.show_colony_overlay and self.colony_overlay is not None:
+                # Ensure overlay matches image dimensions
+                if self.colony_overlay.shape[:2] == display_image.shape[:2]:
+                    # Blend overlay with image (make overlay semi-transparent)
+                    overlay_mask = (self.colony_overlay.sum(axis=2) > 0)
+                    alpha = 0.7  # Make overlay semi-transparent
+                    display_image[overlay_mask] = (alpha * self.colony_overlay[overlay_mask] + 
+                                                (1 - alpha) * display_image[overlay_mask]).astype(np.uint8)
+                else:
+                    print(f"Overlay shape {self.colony_overlay.shape} doesn't match image shape {display_image.shape}")
 
-            height, width, _ = image.shape
+            # Convert to QImage and display
+            height, width = display_image.shape[:2]
             bytes_per_line = 3 * width
-            fmt = QImage.Format_RGB888
-
-        q_image = QImage(image.data, width, height, bytes_per_line, fmt)
-        self._update_display(q_image)
+            
+            q_image = QImage(display_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_image)
+            
+            # Scale to fit the label while maintaining aspect ratio
+            scaled_pixmap = pixmap.scaled(
+                self.image_label.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            
+            self.image_label.setPixmap(scaled_pixmap)
+            
+        except Exception as e:
+            print(f"Error displaying raw image: {e}")
+            self.image_label.setText(f"Error displaying image: {str(e)}")
 
     def _display_processed_image(self, image, mode):
-        """Display processed segmentation results"""
-        # Make a copy to avoid modifying the original
-        image = image.copy()
-
-        if mode == "segmented":
-            # Segmented images are typically binary masks (single channel)
-            if len(image.shape) == 2:
-                # Apply normalization if checkbox is checked
-                if self.normalize_checkbox.isChecked():
-                    image = cv2.normalize(
-                        image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                else:
-                    # Ensure image is uint8 for display
-                    if image.dtype != np.uint8:
-                        image = image.astype(np.uint8)
-
-                height, width = image.shape
-                bytes_per_line = width
-                fmt = QImage.Format_Grayscale8
+        """Display processed/segmented image with optional overlay"""
+        try:
+            # Convert to displayable format
+            if mode == "segmented":
+                # Convert binary segmentation to 8-bit for display
+                display_image = (image > 0).astype(np.uint8) * 255
+                # Convert to RGB for overlay support
+                display_image = cv2.cvtColor(display_image, cv2.COLOR_GRAY2RGB)
             else:
-                # If somehow the segmented image is multi-channel, convert to grayscale
-                if self.normalize_checkbox.isChecked():
-                    image = cv2.normalize(
-                        image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                if len(image.shape) == 3:
-                    image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-                height, width = image.shape
-                bytes_per_line = width
-                fmt = QImage.Format_Grayscale8
+                # Handle other modes (overlay, labeled, etc.)
+                if len(image.shape) == 2:
+                    display_image = cv2.cvtColor(image.astype(np.uint8), cv2.COLOR_GRAY2RGB)
+                else:
+                    display_image = image.astype(np.uint8)
 
-        elif mode in ["overlay", "labeled"]:
-            # Overlay and labeled images should be RGB
-            if len(image.shape) == 2:
-                # Convert single channel to RGB
-                if self.normalize_checkbox.isChecked():
-                    image = cv2.normalize(
-                        image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+            # Add colony overlay if enabled
+            if self.show_colony_overlay and self.colony_overlay is not None:
+                # Ensure overlay matches image dimensions
+                if self.colony_overlay.shape[:2] == display_image.shape[:2]:
+                    # Blend overlay with image
+                    overlay_mask = (self.colony_overlay.sum(axis=2) > 0)
+                    display_image[overlay_mask] = self.colony_overlay[overlay_mask]
+                else:
+                    print(f"Overlay shape {self.colony_overlay.shape} doesn't match image shape {display_image.shape}")
 
-            # Ensure image is uint8 RGB
-            if image.dtype != np.uint8:
-                image = cv2.normalize(
-                    image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-
-            height, width, channels = image.shape
-            bytes_per_line = channels * width
-            fmt = QImage.Format_RGB888
-
-        else:
-            # Unsupported mode
-            return
-
-        # Create QImage and display it
-        q_image = QImage(image.data, width, height, bytes_per_line, fmt)
-        self._update_display(q_image)
-
+            # Convert to QImage and display
+            height, width = display_image.shape[:2]
+            bytes_per_line = 3 * width
+            
+            q_image = QImage(display_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_image)
+            
+            # Scale to fit the label while maintaining aspect ratio
+            scaled_pixmap = pixmap.scaled(
+                self.image_label.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            
+            self.image_label.setPixmap(scaled_pixmap)
+            
+        except Exception as e:
+            print(f"Error displaying processed image: {e}")
+            # Show error message on label
+            self.image_label.setText(f"Error displaying image: {str(e)}")
+        
+        
     def _update_display(self, q_image):
         """Common display update logic"""
         pixmap = QPixmap.fromImage(q_image).scaled(
@@ -654,3 +662,23 @@ class ViewAreaWidget(QWidget):
 
         # Store the highlighted image
         self.highlighted_image = highlighted_image
+        
+        
+    def on_show_colony_overlay(self, overlay):
+        """Handle request to show colony overlay"""
+        self.colony_overlay = overlay
+        self.show_colony_overlay = True
+        self._update_display()
+
+    def on_hide_colony_overlay(self):
+        """Handle request to hide colony overlay"""
+        self.show_colony_overlay = False
+        self._update_display()
+
+    def _update_display(self):
+        """Update the current display with or without overlay"""
+        # Re-request the current image to trigger display update
+        pub.sendMessage("image_request",
+                        time=self.current_t,
+                        position=self.current_p,
+                        channel=self.current_c)
