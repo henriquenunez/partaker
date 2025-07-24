@@ -16,6 +16,8 @@ dist/
 
 datasets/
 
+env_analysis
+
 src/build/
 
 src/dist/
