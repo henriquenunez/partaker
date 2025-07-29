@@ -49,7 +49,14 @@ class SegmentationWidget(QWidget):
         self.request_timer = QTimer(self)
         self.request_timer.setSingleShot(True)
         self.request_timer.timeout.connect(self.process_next_in_queue)
+        
+        pub.subscribe(self.on_polygon_point_added, "polygon_point_added")
 
+    
+    def on_polygon_point_added(self, x, y, total_points):
+        """Handle when a polygon point is added"""
+        self.progress_label.setText(f"Polygon point {total_points} added at ({x}, {y}). Continue clicking or finish polygon.")
+    
     def init_ui(self):
         """Initialize the user interface"""
         layout = QVBoxLayout(self)
@@ -909,8 +916,8 @@ class SegmentationWidget(QWidget):
         self.finish_polygon_btn.setEnabled(True)
         self.cancel_polygon_btn.setEnabled(True)
         
-        # Enable manual selection in ViewArea
-        pub.sendMessage("enable_manual_colony_selection")
+        # Enable manual selection in ViewArea with colony_separator reference
+        pub.sendMessage("enable_manual_colony_selection", colony_separator=self.colony_separator)
         
         self.progress_label.setText("Click on image to draw polygon around biofilm colony")
 

@@ -31,6 +31,11 @@ class ViewAreaWidget(QWidget):
         # Add colony overlay support
         self.colony_overlay = None
         self.show_colony_overlay = False
+        
+        # Add manual colony selection support
+        self.manual_selection_active = False
+        self.current_polygon_points = []
+        self.colony_separator = None
 
         # Set up the UI
         self.init_ui()
@@ -47,6 +52,154 @@ class ViewAreaWidget(QWidget):
         # Add colony overlay subscriptions
         pub.subscribe(self.on_show_colony_overlay, "show_colony_overlay")
         pub.subscribe(self.on_hide_colony_overlay, "hide_colony_overlay")
+        
+        # Add manual selection subscriptions
+        pub.subscribe(self.enable_manual_selection, "enable_manual_colony_selection")
+        pub.subscribe(self.disable_manual_selection, "disable_manual_colony_selection")
+        
+        
+    def enable_manual_selection(self, colony_separator=None):
+        """Enable manual colony selection mode"""
+        self.manual_selection_active = True
+        self.colony_separator = colony_separator
+        self.current_polygon_points = []
+        
+        # Enable mouse click events on the image label
+        self.image_label.mousePressEvent = self.on_image_click
+        self.image_label.setStyleSheet("border: 2px solid blue;")  # Visual feedback
+        print("Manual selection enabled. Click on image to draw polygon.")
+
+    def disable_manual_selection(self):
+        """Disable manual colony selection mode"""
+        self.manual_selection_active = False
+        self.current_polygon_points = []
+        
+        # Disable mouse events
+        self.image_label.mousePressEvent = None
+        self.image_label.setStyleSheet("")  # Remove border
+        print("Manual selection disabled.")
+
+    def on_image_click(self, event):
+        """Handle mouse clicks on the image for polygon drawing"""
+        if not self.manual_selection_active:
+            return
+        
+        # Get click position relative to the image
+        click_x = event.pos().x()
+        click_y = event.pos().y()
+        
+        # Convert from display coordinates to image coordinates
+        if hasattr(self.image_label, 'pixmap') and self.image_label.pixmap():
+            pixmap = self.image_label.pixmap()
+            label_size = self.image_label.size()
+            pixmap_size = pixmap.size()
+            
+            # Calculate scaling factors
+            scale_x = pixmap_size.width() / label_size.width()
+            scale_y = pixmap_size.height() / label_size.height()
+            
+            # Convert to image coordinates
+            image_x = int(click_x * scale_x)
+            image_y = int(click_y * scale_y)
+            
+            # Add point to current polygon
+            self.current_polygon_points.append((image_x, image_y))
+            print(f"Added polygon point: ({image_x}, {image_y}). Total points: {len(self.current_polygon_points)}")
+            
+            # Send point to colony separator
+            if self.colony_separator:
+                self.colony_separator.add_polygon_point(image_x, image_y)
+            
+            # Visual feedback - draw temporary overlay
+            self.draw_polygon_preview()
+            
+            # Notify segmentation widget
+            pub.sendMessage("polygon_point_added", x=image_x, y=image_y, total_points=len(self.current_polygon_points))
+
+    def draw_polygon_preview(self):
+        """Draw a preview of the current polygon being drawn"""
+        if len(self.current_polygon_points) < 2:
+            return
+        
+        # Create temporary overlay showing the polygon in progress
+        if hasattr(self, 'current_image') and self.current_image is not None:
+            # Create overlay with polygon lines
+            overlay = np.zeros((*self.current_image.shape[:2], 3), dtype=np.uint8)
+            
+            # Draw lines between points
+            points = np.array(self.current_polygon_points, dtype=np.int32)
+            for i in range(len(points) - 1):
+                cv2.line(overlay, tuple(points[i]), tuple(points[i + 1]), (0, 255, 0), 2)
+            
+            # Draw points
+            for point in points:
+                cv2.circle(overlay, tuple(point), 3, (255, 0, 0), -1)
+            
+            # Show the overlay
+            self.temp_polygon_overlay = overlay
+            self._display_with_temp_overlay()
+
+    def _display_with_temp_overlay(self):
+        """Display current image with temporary polygon overlay"""
+        if not hasattr(self, 'current_image') or self.current_image is None:
+            return
+        
+        display_image = self.current_image.copy()
+        
+        # Convert to RGB if needed
+        if len(display_image.shape) == 2:
+            display_image = cv2.cvtColor(display_image, cv2.COLOR_GRAY2RGB)
+        
+        # Add temporary polygon overlay
+        if hasattr(self, 'temp_polygon_overlay'):
+            overlay_mask = (self.temp_polygon_overlay.sum(axis=2) > 0)
+            display_image[overlay_mask] = self.temp_polygon_overlay[overlay_mask]
+        
+        # Add colony overlay if enabled
+        if self.show_colony_overlay and self.colony_overlay is not None:
+            overlay_mask = (self.colony_overlay.sum(axis=2) > 0)
+            display_image[overlay_mask] = self.colony_overlay[overlay_mask]
+        
+        # Display the image
+        self._display_image_array(display_image)
+
+    def _display_image_array(self, image_array):
+        """Helper method to display numpy array as QPixmap"""
+        try:
+            if len(image_array.shape) == 2:
+                # Grayscale
+                height, width = image_array.shape
+                bytes_per_line = width
+                q_image = QImage(image_array.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
+            else:
+                # RGB
+                height, width = image_array.shape[:2]
+                bytes_per_line = 3 * width
+                q_image = QImage(image_array.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            
+            pixmap = QPixmap.fromImage(q_image)
+            
+            # Scale to fit the label
+            scaled_pixmap = pixmap.scaled(
+                self.image_label.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            
+            self.image_label.setPixmap(scaled_pixmap)
+            
+        except Exception as e:
+            print(f"Error displaying image: {e}")
+            self.image_label.setText(f"Error displaying image: {str(e)}")
+
+    def clear_current_polygon(self):
+        """Clear the current polygon being drawn"""
+        self.current_polygon_points = []
+        if hasattr(self, 'temp_polygon_overlay'):
+            del self.temp_polygon_overlay
+        # Redisplay image without polygon preview
+        if hasattr(self, 'current_image'):
+            self._display_with_temp_overlay()
 
     def on_segmentation_cache_miss(self, time, position, channel, model):
         """Handle when cached segmentation is not available"""
