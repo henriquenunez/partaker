@@ -1,7 +1,7 @@
 from ..biofilms.colony_separator import ColonySeparator
 from PySide6.QtWidgets import (QGroupBox, QVBoxLayout, QHBoxLayout, QLabel, 
                                QSlider, QPushButton, QSpinBox, QCheckBox,
-                               QFrame, QSplitter, QWidget, QComboBox, QAbstractItemView, QListWidget, QProgressBar, QRadioButton)
+                               QFrame, QSplitter, QWidget, QComboBox, QAbstractItemView, QListWidget, QProgressBar, QRadioButton, QDialog)
 from PySide6.QtCore import Qt, QTimer
 from pubsub import pub
 import numpy as np
@@ -743,13 +743,19 @@ class SegmentationWidget(QWidget):
 
     def update_colony_overlay(self):
         """Update colony overlay in the view"""
-        if self.current_segmented_image is not None and self.colony_overlay_visible:
+        colonies = self.colony_separator.get_all_colonies()
+        print(f"DEBUG: Updating overlay with {len(colonies)} colonies")
+        
+        if self.current_raw_image is not None and self.colony_overlay_visible and len(colonies) > 0:
             # Create overlay
-            overlay = self.colony_separator.create_colony_overlay(self.current_segmented_image.shape)
+            overlay = self.colony_separator.create_colony_overlay(self.current_raw_image.shape)
+            print(f"DEBUG: Created overlay with shape {overlay.shape}")
             
             # Send overlay to ViewArea
             pub.sendMessage("show_colony_overlay", overlay=overlay)
+            print("DEBUG: Sent overlay to ViewArea")
         else:
+            print(f"DEBUG: Not showing overlay - raw_image: {self.current_raw_image is not None}, overlay_visible: {self.colony_overlay_visible}, colonies: {len(colonies)}")
             # Hide overlay
             pub.sendMessage("hide_colony_overlay")
 
@@ -910,16 +916,57 @@ class SegmentationWidget(QWidget):
             self.manual_instructions.setText("Manual Mode: Click 'Start Manual Selection', then click on image to draw polygons")
 
     def start_manual_selection(self):
-        """Start manual colony selection mode"""
-        self.colony_separator.start_manual_selection()
+        """Start manual colony selection using Colony ROI Selector"""
+        # Get current raw image
+        if not hasattr(self, 'current_raw_image') or self.current_raw_image is None:
+            self.progress_label.setText("No raw image available. Load image data first.")
+            return
+        
+        # Import the colony ROI selector
+        from ..dialogs.colony_roi_selector import ColonyROISelector
+        
+        # Open the colony ROI selector dialog
+        roi_dialog = ColonyROISelector(self.current_raw_image, parent=self)
+        roi_dialog.colonies_selected.connect(self.handle_selected_colonies)
+        
+        # Update UI state
         self.start_manual_btn.setEnabled(False)
-        self.finish_polygon_btn.setEnabled(True)
-        self.cancel_polygon_btn.setEnabled(True)
+        self.progress_label.setText("Colony ROI Selector opened. Select colonies and click Accept.")
         
-        # Enable manual selection in ViewArea with colony_separator reference
-        pub.sendMessage("enable_manual_colony_selection", colony_separator=self.colony_separator)
+        # Show dialog
+        result = roi_dialog.exec()
         
-        self.progress_label.setText("Click on image to draw polygon around biofilm colony")
+        # Reset UI state
+        self.start_manual_btn.setEnabled(True)
+        
+        if result == QDialog.Accepted:
+            self.progress_label.setText(f"Selected {len(self.colony_separator.get_all_colonies())} colonies manually.")
+        else:
+            self.progress_label.setText("Colony selection cancelled.")
+
+    def handle_selected_colonies(self, colonies_data):
+        """Handle colonies selected from ROI dialog"""
+        # Clear existing manual colonies
+        self.colony_separator.manual_additions = []
+        
+        # Add each selected colony
+        for colony_data in colonies_data:
+            # Convert to colony separator format
+            colony = self.colony_separator.add_manual_colony(
+                colony_data['polygon'], 
+                self.current_raw_image.shape
+            )
+        
+        # Update UI
+        self.update_colony_count()
+        
+        # MAKE SURE TO ENABLE OVERLAY
+        self.colony_overlay_visible = True
+        self.show_overlay_btn.setEnabled(True)
+        
+        self.update_colony_overlay()
+        
+        print(f"Added {len(colonies_data)} colonies from ROI selection")
 
     def finish_current_polygon(self):
         """Finish the current polygon"""

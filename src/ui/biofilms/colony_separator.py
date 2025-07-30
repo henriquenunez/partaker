@@ -5,6 +5,9 @@ from skimage.segmentation import clear_border
 from typing import List, Dict, Tuple
 import polars as pl
 
+from PyQt5.QtWidgets import QDialog  # Add this import if using PyQt5
+# from PySide2.QtWidgets import QDialog  # Or use this if using PySide2
+
 class ColonySeparator:
     """BiofilmQ-style colony separation tool for automatic biofilm region detection"""
     
@@ -198,12 +201,6 @@ class ColonySeparator:
     def create_colony_overlay(self, image_shape: Tuple[int, int]) -> np.ndarray:
         """
         Create an overlay image showing detected colonies with contours (like BiofilmQ)
-        
-        Args:
-            image_shape: Shape of the original image (height, width)
-            
-        Returns:
-            RGB overlay image with colored contours
         """
         overlay = np.zeros((*image_shape, 3), dtype=np.uint8)
         
@@ -229,30 +226,75 @@ class ColonySeparator:
             if 'contour' in colony:
                 contour = colony['contour'].reshape(-1, 1, 2).astype(np.int32)
                 cv2.drawContours(overlay, [contour], -1, color, 2)
+                
+                # Calculate centroid from contour
+                M = cv2.moments(contour)
+                if M["m00"] != 0:
+                    centroid_x = int(M["m10"] / M["m00"])
+                    centroid_y = int(M["m01"] / M["m00"])
+                else:
+                    # Fallback to contour center
+                    centroid_x = int(np.mean(contour[:, 0, 0]))
+                    centroid_y = int(np.mean(contour[:, 0, 1]))
+                    
             else:
                 # Fallback to bounding box if no contour
                 x1, y1, x2, y2 = colony['bbox']
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 2)
+                
+                # Calculate bounding box center
+                centroid_x = int((x1 + x2) / 2)
+                centroid_y = int((y1 + y2) / 2)
             
-            # Draw colony ID near centroid
-            centroid_x, centroid_y = int(colony['centroid'][0]), int(colony['centroid'][1])
+            # Draw colony ID near centroid (FIXED POSITIONING)
             cv2.putText(overlay, f"C{colony['colony_id']}", 
                     (centroid_x - 10, centroid_y), cv2.FONT_HERSHEY_SIMPLEX, 
-                    0.6, color, 2)
+                    0.8, color, 2)  # Made text bigger and bolder
             
             # Draw small circle at centroid
-            cv2.circle(overlay, (centroid_x, centroid_y), 3, color, -1)
+            cv2.circle(overlay, (centroid_x, centroid_y), 4, color, -1)
         
         return overlay
     
     
-    
     def start_manual_selection(self):
-        """Start manual colony selection mode"""
-        self.manual_selection_mode = True
-        self.current_polygon = []
-        self.detected_colonies = []  # Clear auto-detected colonies
-        print("Manual colony selection mode started. Click to draw polygon around biofilm.")
+        """Start manual colony selection using Colony ROI Selector"""
+        # Get current raw image
+        if not hasattr(self, 'current_raw_image') or self.current_raw_image is None:
+            self.progress_label.setText("No raw image available. Load image data first.")
+            return
+        
+        # Import the colony ROI selector
+        from ui.dialogs.colony_roi_selector import ColonyROISelector
+        
+        # Get existing colonies to pass to the dialog
+        existing_colonies = []
+        for colony in self.colony_separator.get_all_colonies():
+            if 'polygon_points' in colony:
+                existing_colonies.append({
+                    'colony_id': colony['colony_id'],
+                    'polygon': colony['polygon_points'],
+                    'mask': None  # We can regenerate this if needed
+                })
+        
+        # Open the colony ROI selector dialog with existing colonies
+        roi_dialog = ColonyROISelector(self.current_raw_image, existing_colonies=existing_colonies, parent=self)
+        roi_dialog.colonies_selected.connect(self.handle_selected_colonies)
+        
+        # Update UI state
+        self.start_manual_btn.setEnabled(False)
+        self.progress_label.setText("Colony ROI Selector opened. Existing colonies are preserved.")
+        
+        # Show dialog
+        result = roi_dialog.exec()
+        
+        # Reset UI state
+        self.start_manual_btn.setEnabled(True)
+        
+        if result == QDialog.Accepted:
+            self.progress_label.setText(f"Selected {len(self.colony_separator.get_all_colonies())} colonies manually.")
+        else:
+            self.progress_label.setText("Colony selection cancelled.")
 
     def add_polygon_point(self, x: int, y: int):
         """Add a point to the current polygon being drawn"""

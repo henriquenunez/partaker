@@ -406,6 +406,9 @@ class ViewAreaWidget(QWidget):
                 mode != self.current_mode):
             return  # Ignore outdated images
 
+        # STORE THE CURRENT IMAGE
+        self.current_image = image
+        
         # Convert and display based on mode
         if mode == "normal":
             self._display_raw_image(image)
@@ -819,9 +822,16 @@ class ViewAreaWidget(QWidget):
         
     def on_show_colony_overlay(self, overlay):
         """Handle request to show colony overlay"""
+        print(f"DEBUG: ViewArea received overlay with shape {overlay.shape}")
         self.colony_overlay = overlay
         self.show_colony_overlay = True
-        self._update_display()
+        
+        # Force image refresh to show overlay
+        print("DEBUG: Forcing image refresh to show overlay")
+        pub.sendMessage("image_request",
+                        time=self.current_t,
+                        position=self.current_p,
+                        channel=self.current_c)
 
     def on_hide_colony_overlay(self):
         """Handle request to hide colony overlay"""

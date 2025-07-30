@@ -331,6 +331,10 @@ class App(QMainWindow):
     def load_nd2_file(self, file_path):
         self.image_data = ImageData.load_nd2(file_path)
         self.init_controls_nd2(file_path)
+        if hasattr(self.image_data, 'shape') and len(self.image_data.shape) > 2:
+            self.has_channels = len(self.image_data.shape) > 3
+        else:
+            self.has_channels = False
 
     def init_controls_nd2(self, file_path):
         """ This function updates the controls with the ND2 dimensions.
@@ -647,32 +651,34 @@ class App(QMainWindow):
                         channel=c)
 
     def on_image_request(self, time, position, channel):
-        """Handle requests for raw image data"""
+        """Handle image request from other components"""
         if not self.image_data:
             return
 
-        # Retrieve the image data
         try:
-            if self.image_data.is_nd2:
-                if self.has_channels:
-                    image = self.image_data.data[time, position, channel]
-                else:
-                    image = self.image_data.data[time, position]
-            else:
-                image = self.image_data.data[time]
-
-            # Convert to NumPy array if needed
+            # Your data shape is (49, 9, 2044, 2048) = (T, P, Y, X)
+            data_array = self.image_data.data
+            
+            # Get the 2D image at [time, position]
+            image = data_array[time, position]  # This should give (2044, 2048)
+            
+            # Convert to NumPy array
             image = np.array(image)
+            print(f"DEBUG: Final image shape: {image.shape}")
 
-            # Publish the image
+            # Send the image
             pub.sendMessage("image_ready",
                             image=image,
                             time=time,
                             position=position,
-                            channel=channel)
+                            channel=channel,
+                            mode="normal")
+                            
+            print(f"DEBUG: Successfully sent image T={time}, P={position}, C={channel}")
+            
         except Exception as e:
             print(f"Error retrieving image: {e}")
-
+    
     def on_segmentation_request(self, time, position, channel, model_name):
         """Handle requests for segmentation data"""
         if not self.image_data:
