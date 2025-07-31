@@ -13,9 +13,27 @@ class ColonyROISelector(QDialog):
     def __init__(self, image_data, existing_colonies=None, parent=None):
         super().__init__(parent)
         
+        print(f"DEBUG: ColonyROISelector received {len(existing_colonies) if existing_colonies else 0} existing colonies")
+        
         self.image_data = image_data
         self.existing_colonies = existing_colonies or []
         self.current_colonies = []
+        
+        # Convert existing colonies
+        if self.existing_colonies:
+            print(f"DEBUG: Converting {len(self.existing_colonies)} existing colonies")
+            for i, colony in enumerate(self.existing_colonies):
+                print(f"DEBUG: Converting colony {i+1}: {colony.keys()}")
+                converted_colony = {
+                    'colony_id': len(self.current_colonies) + 1,
+                    'polygon': colony['polygon'],
+                    'mask': self.create_mask_from_polygon(colony['polygon'])
+                }
+                self.current_colonies.append(converted_colony)
+                print(f"DEBUG: Added colony {converted_colony['colony_id']} with {len(colony['polygon'])} points")
+        
+        print(f"DEBUG: Dialog now has {len(self.current_colonies)} colonies to display")
+    
         self.current_polygon = []
         self.drawing_mode = False
         
@@ -27,7 +45,7 @@ class ColonyROISelector(QDialog):
         self.setup_image()
         
     def init_ui(self):
-        """Initialize the user interface"""1
+        """Initialize the user interface"""
         layout = QHBoxLayout(self)
         
         # Left side - Image display

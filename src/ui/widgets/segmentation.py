@@ -922,11 +922,33 @@ class SegmentationWidget(QWidget):
             self.progress_label.setText("No raw image available. Load image data first.")
             return
         
-        # Import the colony ROI selector
-        from ..dialogs.colony_roi_selector import ColonyROISelector
+        # DEBUG: Check what colonies exist
+        all_colonies = self.colony_separator.get_all_colonies()
+        print(f"DEBUG: Found {len(all_colonies)} existing colonies before opening dialog")
+        for i, colony in enumerate(all_colonies):
+            print(f"DEBUG: Colony {i+1}: ID={colony.get('colony_id')}, source={colony.get('source')}")
+            if 'polygon_points' in colony:
+                print(f"DEBUG: Colony {i+1} has polygon_points with {len(colony['polygon_points'])} points")
+            else:
+                print(f"DEBUG: Colony {i+1} missing polygon_points!")
         
-        # Open the colony ROI selector dialog
-        roi_dialog = ColonyROISelector(self.current_raw_image, parent=self)
+        # Get existing colonies to pass to the dialog
+        existing_colonies = []
+        for colony in all_colonies:
+            if 'polygon_points' in colony:
+                existing_colonies.append({
+                    'colony_id': colony['colony_id'],
+                    'polygon': colony['polygon_points'],
+                    'mask': None
+                })
+            else:
+                print(f"DEBUG: Skipping colony {colony.get('colony_id')} - no polygon_points")
+        
+        print(f"DEBUG: Passing {len(existing_colonies)} colonies to dialog")
+        
+        # Import and open dialog
+        from ui.dialogs.colony_roi_selector import ColonyROISelector
+        roi_dialog = ColonyROISelector(self.current_raw_image, existing_colonies=existing_colonies, parent=self)
         roi_dialog.colonies_selected.connect(self.handle_selected_colonies)
         
         # Update UI state
