@@ -1,13 +1,14 @@
 from ..biofilms.colony_separator import ColonySeparator
 from PySide6.QtWidgets import (QGroupBox, QVBoxLayout, QHBoxLayout, QLabel, 
                                QSlider, QPushButton, QSpinBox, QCheckBox,
-                               QFrame, QSplitter, QWidget, QComboBox, QAbstractItemView, QListWidget, QProgressBar, QRadioButton, QDialog)
+                               QFrame, QSplitter, QWidget, QComboBox, QAbstractItemView, QListWidget, QProgressBar, QRadioButton, QDialog, QFileDialog)
 from PySide6.QtCore import Qt, QTimer
 from pubsub import pub
 import numpy as np
 from ..biofilms.analysis_mode import AnalysisMode, AnalysisModeConfig
 from ..biofilms.config.biofilm_config import BiofilmConfig
 from ..biofilms.colony_analysis import ColonyGrouper, ColonyTracker
+from ..biofilms.colony_time_series_exporter import ColonyTimeSeriesExporter
 
 
 class SegmentationWidget(QWidget):
@@ -726,6 +727,9 @@ class SegmentationWidget(QWidget):
             self.colony_overlay_visible = True
             self.update_colony_overlay()
             
+            print(f"DEBUG: Detected {len(colonies)} colonies, enabling export button")
+            self.export_colonies_btn.setEnabled(True)
+            
             # Print colony information
             print(f"\nDetected {len(colonies)} biofilm colonies:")
             for colony in colonies:
@@ -880,6 +884,12 @@ class SegmentationWidget(QWidget):
         self.clear_colonies_btn.clicked.connect(self.clear_all_colonies)
         control_layout2.addWidget(self.clear_colonies_btn)
         
+        self.export_colonies_btn = QPushButton("Export Colony Series")
+        self.export_colonies_btn.clicked.connect(self.export_colony_time_series)
+        self.export_colonies_btn.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
+        self.export_colonies_btn.setEnabled(False)  # Enable when colonies are detected
+        control_layout2.addWidget(self.export_colonies_btn)
+        
         layout.addLayout(control_layout2)
         
         # Colony count display
@@ -894,6 +904,76 @@ class SegmentationWidget(QWidget):
         # Set initial mode
         self.on_mode_changed()
         
+        
+       
+    def export_colony_time_series(self):
+        print("DEBUG: Export button clicked!")  # Add this line first
+        
+        if not hasattr(self, 'colony_separator') or not self.colony_separator.get_all_colonies():
+            print("DEBUG: No colonies found")  # Add this too
+            self.progress_label.setText("No colonies to export. Detect colonies first.")
+            return
+        
+        # Get export folder
+        export_folder = QFileDialog.getExistingDirectory(
+            self, "Select Export Folder", "", QFileDialog.ShowDirsOnly)
+        
+        if not export_folder:
+            return
+        
+        # Import the exporter
+        from ..biofilms.colony_time_series_exporter import ColonyTimeSeriesExporter
+        
+        # Get current parameters
+        time_start = self.time_start_spin.value()
+        time_end = self.time_end_spin.value()
+        position = self.get_selected_positions()[0] if self.get_selected_positions() else 0
+        channel = self.channel_combo.currentIndex()
+        
+        # Get image data from main app
+        image_data = None
+        def receive_image_data(data):
+            nonlocal image_data
+            image_data = data
+        
+        pub.sendMessage("get_image_data", callback=receive_image_data)
+        
+        if not image_data:
+            self.progress_label.setText("No image data available for export.")
+            return
+        
+        # Create exporter and start export
+        exporter = ColonyTimeSeriesExporter(self.colony_separator, image_data)
+        
+        # Progress callback
+        def update_progress(percent):
+            self.progress_bar.setValue(percent)
+        
+        self.progress_label.setText("Exporting colony time series...")
+        self.export_colonies_btn.setEnabled(False)
+        
+        try:
+            # Run export
+            result = exporter.export_all_colonies(
+                export_folder, 
+                (time_start, time_end), 
+                position, 
+                channel,
+                export_format="outlined",  
+                progress_callback=update_progress
+            )
+            
+            if "error" in result:
+                self.progress_label.setText(f"Export failed: {result['error']}")
+            else:
+                exported_count = len(result.get("colonies_exported", []))
+                self.progress_label.setText(f"Successfully exported {exported_count} colonies to {export_folder}")
+            
+        except Exception as e:
+            self.progress_label.setText(f"Export error: {str(e)}")
+        finally:
+            self.export_colonies_btn.setEnabled(True)
+            self.progress_bar.setValue(100)    
         
         
     def on_mode_changed(self):
@@ -982,9 +1062,10 @@ class SegmentationWidget(QWidget):
         # Update UI
         self.update_colony_count()
         
-        # MAKE SURE TO ENABLE OVERLAY
+        # MAKE SURE TO ENABLE OVERLAY AND EXPORT
         self.colony_overlay_visible = True
         self.show_overlay_btn.setEnabled(True)
+        self.export_colonies_btn.setEnabled(True)  # ADD THIS LINE IF MISSING
         
         self.update_colony_overlay()
         
