@@ -46,6 +46,7 @@ from metrics_service import MetricsService
 from ui.biofilms.analysis_mode import AnalysisMode, AnalysisModeConfig
 from ui.dialogs.mode_selection_dialog import ModeSelectionDialog
 from ui.biofilms.config.biofilm_config import BiofilmConfig
+from ui.biofilms.cube_analysis import CubeAnalysisWidget
 
 
 class MorphologyWorker(QObject):
@@ -2903,11 +2904,7 @@ class App(QMainWindow):
         # For now, create placeholder tabs - we'll implement these in later tasks
         self.segmentation_tab = SegmentationWidget()  # Same segmentation
 
-        # Placeholder biofilm tabs (we'll implement these in future tasks)
-        placeholder_tab1 = QWidget()
-        placeholder_tab1_layout = QVBoxLayout(placeholder_tab1)
-        placeholder_tab1_layout.addWidget(
-            QLabel("Biofilm Cloud Dynamics - Coming Soon"))
+        self.cube_analysis_tab = CubeAnalysisWidget()
 
         placeholder_tab2 = QWidget()
         placeholder_tab2_layout = QVBoxLayout(placeholder_tab2)
@@ -2921,7 +2918,7 @@ class App(QMainWindow):
 
         # Add tabs to the QTabWidget
         self.tab_widget.addTab(self.segmentation_tab, "Segmentation")
-        self.tab_widget.addTab(placeholder_tab1, "Cloud Dynamics")
+        self.tab_widget.addTab(self.cube_analysis_tab, "Cube Analysis") 
         self.tab_widget.addTab(placeholder_tab2, "Colony Tracking")
         self.tab_widget.addTab(placeholder_tab3, "Spatial Analysis")
 
