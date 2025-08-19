@@ -959,7 +959,7 @@ class SegmentationWidget(QWidget):
                 (time_start, time_end), 
                 position, 
                 channel,
-                export_format="outlined",  
+                export_format="cropped",  # Clean cropped colonies for cube analysis  
                 progress_callback=update_progress
             )
             

@@ -11,6 +11,7 @@ import numpy as np
 import cv2
 from scipy.spatial.distance import cdist
 from scipy.ndimage import gaussian_filter, distance_transform_edt
+from skimage import measure
 import tifffile
 import traceback
 
@@ -114,11 +115,13 @@ class AnalysisWorker(QObject):
                 
                 # Read and process image
                 image_data = tifffile.imread(file_path)
-                colony_mask = self.extract_colony_region(image_data)
+                
+                # Simple approach: treat entire cropped image as biofilm
+                colony_mask_and_boxes = self.extract_cropped_colony_region(image_data)
                 
                 # Calculate parameters
                 time_point_results = self.calculate_square_parameters(
-                    image_data, colony_mask, self.cube_size
+                    image_data, colony_mask_and_boxes, self.cube_size
                 )
                 
                 # Store results
@@ -138,25 +141,76 @@ class AnalysisWorker(QObject):
         return colony_results, files_processed
     
     def extract_colony_region(self, image_data):
-        """Extract colony region from exported image"""
+        """Extract colony region from exported image using black-bordered box detection"""
         # Convert to grayscale if RGB
         if len(image_data.shape) == 3:
             gray_image = cv2.cvtColor(image_data, cv2.COLOR_RGB2GRAY)
         else:
             gray_image = image_data
         
-        # Simple thresholding
-        threshold_value = np.mean(gray_image) + np.std(gray_image) * 0.5
-        binary_mask = (gray_image > threshold_value).astype(np.uint8)
+        # Try to find black-bordered boxes first
+        detected_boxes = self.find_black_bordered_boxes(gray_image)
         
-        return binary_mask
+        if detected_boxes:
+            self.console_output.emit(f"      Found {len(detected_boxes)} black-bordered boxes")
+            
+            # Create combined mask from all detected boxes
+            combined_mask = np.zeros_like(gray_image, dtype=np.uint8)
+            
+            for i, (x, y, w, h) in enumerate(detected_boxes):
+                self.console_output.emit(f"      Box {i+1}: x={x}, y={y}, w={w}, h={h}")
+                
+                # Validate box bounds
+                if (x >= 0 and y >= 0 and 
+                    x + w <= gray_image.shape[1] and 
+                    y + h <= gray_image.shape[0]):
+                    
+                    # Extract region within the box
+                    box_region = gray_image[y:y+h, x:x+w]
+                    
+                    # Validate box region
+                    if box_region.size > 0:
+                        # Apply thresholding within the box region
+                        if np.std(box_region) > 0:  # Avoid division by zero
+                            threshold_value = np.mean(box_region) + np.std(box_region) * 0.5
+                            box_mask = (box_region > threshold_value).astype(np.uint8)
+                        else:
+                            # Fallback for uniform regions
+                            box_mask = (box_region > np.mean(box_region)).astype(np.uint8)
+                        
+                        self.console_output.emit(f"      Box {i+1} mask: {np.sum(box_mask)} pixels detected")
+                        
+                        # Place the mask back into the combined mask
+                        combined_mask[y:y+h, x:x+w] = box_mask
+                    else:
+                        self.console_output.emit(f"      Warning: Empty box region for box {i+1}")
+                else:
+                    self.console_output.emit(f"      Warning: Box {i+1} bounds invalid: x={x}, y={y}, w={w}, h={h}")
+            
+            return combined_mask, detected_boxes
+        else:
+            self.console_output.emit("      No red-bordered boxes found, using fallback method")
+            
+            # Fallback to original method
+            threshold_value = np.mean(gray_image) + np.std(gray_image) * 0.5
+            binary_mask = (gray_image > threshold_value).astype(np.uint8)
+            
+            self.console_output.emit(f"      Fallback threshold: {threshold_value:.1f}, mask pixels: {np.sum(binary_mask)}")
+            return binary_mask, []
     
-    def calculate_square_parameters(self, image_data, colony_mask, square_size):
-        """Calculate parameters for each square in the colony region"""
+    def calculate_square_parameters(self, image_data, colony_mask_and_boxes, square_size):
+        """Calculate parameters for each square in the colony region with offset support"""
         if len(image_data.shape) == 3:
             gray_image = cv2.cvtColor(image_data, cv2.COLOR_RGB2GRAY)
         else:
             gray_image = image_data
+        
+        # Handle both old and new return formats
+        if isinstance(colony_mask_and_boxes, tuple):
+            colony_mask, detected_boxes = colony_mask_and_boxes
+        else:
+            colony_mask = colony_mask_and_boxes
+            detected_boxes = []
         
         height, width = gray_image.shape
         results = {
@@ -179,62 +233,144 @@ class AnalysisWorker(QObject):
         step_size = max(square_size // 2, 5)
         
         squares_processed = 0
-        for y in range(0, height - square_size + 1, step_size):
-            for x in range(0, width - square_size + 1, step_size):
-                if self.should_stop:
-                    break
-                    
-                square_center = (x + square_size//2, y + square_size//2)
+        
+        # If we have detected boxes, focus analysis on those regions
+        if detected_boxes:
+            for box_idx, (box_x, box_y, box_w, box_h) in enumerate(detected_boxes):
+                self.console_output.emit(f"      Analyzing box {box_idx+1}/{len(detected_boxes)}")
                 
-                # Quick check - only process if square center is in biofilm
-                if colony_mask[square_center[1], square_center[0]] > 0:
-                    # Extract square regions
-                    image_square = gray_image[y:y+square_size, x:x+square_size]
-                    mask_square = colony_mask[y:y+square_size, x:x+square_size]
+                # Validate box dimensions and ensure we have room for squares
+                if box_w < square_size or box_h < square_size:
+                    self.console_output.emit(f"      Skipping box {box_idx+1}: too small for {square_size}px squares")
+                    continue
+                
+                # Calculate safe bounds for analysis
+                end_y = min(box_y + box_h - square_size + 1, height - square_size + 1)
+                end_x = min(box_x + box_w - square_size + 1, width - square_size + 1)
+                
+                if end_y <= box_y or end_x <= box_x:
+                    self.console_output.emit(f"      Skipping box {box_idx+1}: insufficient space for analysis")
+                    continue
+                
+                # Analyze within this box only
+                for y in range(box_y, end_y, step_size):
+                    for x in range(box_x, end_x, step_size):
+                        if self.should_stop:
+                            break
+                            
+                        square_center = (x + square_size//2, y + square_size//2)
+                        
+                        # Quick check - only process if square center is in biofilm
+                        # Validate square center coordinates
+                        if (0 <= square_center[1] < height and 
+                            0 <= square_center[0] < width and
+                            colony_mask[square_center[1], square_center[0]] > 0):
+                            # Extract square regions
+                            image_square = gray_image[y:y+square_size, x:x+square_size]
+                            mask_square = colony_mask[y:y+square_size, x:x+square_size]
+                            
+                            # Only detailed analysis if significant biofilm present
+                            if np.sum(mask_square) > square_size * square_size * 0.1:
+                                # Store global coordinates
+                                results['square_positions'].append(square_center)
+                                
+                                # Calculate parameters based on selection
+                                if 'Local Density' in self.selected_params:
+                                    results['local_density'].append(
+                                        np.sum(mask_square) / (square_size * square_size)
+                                    )
+                                else:
+                                    results['local_density'].append(0)
+                                
+                                if 'Distance to Edge' in self.selected_params:
+                                    results['distance_to_edge'].append(
+                                        distance_transform[square_center[1], square_center[0]]
+                                    )
+                                else:
+                                    results['distance_to_edge'].append(0)
+                                
+                                if 'Distance to Center' in self.selected_params:
+                                    results['distance_to_center'].append(
+                                        self.calc_distance_to_center(square_center, colony_center)
+                                    )
+                                else:
+                                    results['distance_to_center'].append(0)
+                                
+                                results['shape_area'].append(np.sum(mask_square))
+                                
+                                if 'Fluorescence Intensity' in self.selected_params:
+                                    results['intensity_mean'].append(
+                                        self.calc_intensity_mean(image_square, mask_square)
+                                    )
+                                else:
+                                    results['intensity_mean'].append(0)
+                                
+                                if 'Local Texture' in self.selected_params:
+                                    results['local_thickness'].append(
+                                        results['distance_to_edge'][-1]
+                                    )
+                                else:
+                                    results['local_thickness'].append(0)
+                                
+                                squares_processed += 1
+        else:
+            # Fallback to original full-image analysis
+            for y in range(0, height - square_size + 1, step_size):
+                for x in range(0, width - square_size + 1, step_size):
+                    if self.should_stop:
+                        break
+                        
+                    square_center = (x + square_size//2, y + square_size//2)
                     
-                    # Only detailed analysis if significant biofilm present
-                    if np.sum(mask_square) > square_size * square_size * 0.1:
-                        results['square_positions'].append(square_center)
+                    # Quick check - only process if square center is in biofilm
+                    if colony_mask[square_center[1], square_center[0]] > 0:
+                        # Extract square regions
+                        image_square = gray_image[y:y+square_size, x:x+square_size]
+                        mask_square = colony_mask[y:y+square_size, x:x+square_size]
                         
-                        # Calculate parameters based on selection
-                        if 'Local Density' in self.selected_params:
-                            results['local_density'].append(
-                                np.sum(mask_square) / (square_size * square_size)
-                            )
-                        else:
-                            results['local_density'].append(0)
-                        
-                        if 'Distance to Edge' in self.selected_params:
-                            results['distance_to_edge'].append(
-                                distance_transform[square_center[1], square_center[0]]
-                            )
-                        else:
-                            results['distance_to_edge'].append(0)
-                        
-                        if 'Distance to Center' in self.selected_params:
-                            results['distance_to_center'].append(
-                                self.calc_distance_to_center(square_center, colony_center)
-                            )
-                        else:
-                            results['distance_to_center'].append(0)
-                        
-                        results['shape_area'].append(np.sum(mask_square))
-                        
-                        if 'Fluorescence Intensity' in self.selected_params:
-                            results['intensity_mean'].append(
-                                self.calc_intensity_mean(image_square, mask_square)
-                            )
-                        else:
-                            results['intensity_mean'].append(0)
-                        
-                        if 'Local Texture' in self.selected_params:
-                            results['local_thickness'].append(
-                                results['distance_to_edge'][-1]
-                            )
-                        else:
-                            results['local_thickness'].append(0)
-                        
-                        squares_processed += 1
+                        # Only detailed analysis if significant biofilm present
+                        if np.sum(mask_square) > square_size * square_size * 0.1:
+                            results['square_positions'].append(square_center)
+                            
+                            # Calculate parameters based on selection
+                            if 'Local Density' in self.selected_params:
+                                results['local_density'].append(
+                                    np.sum(mask_square) / (square_size * square_size)
+                                )
+                            else:
+                                results['local_density'].append(0)
+                            
+                            if 'Distance to Edge' in self.selected_params:
+                                results['distance_to_edge'].append(
+                                    distance_transform[square_center[1], square_center[0]]
+                                )
+                            else:
+                                results['distance_to_edge'].append(0)
+                            
+                            if 'Distance to Center' in self.selected_params:
+                                results['distance_to_center'].append(
+                                    self.calc_distance_to_center(square_center, colony_center)
+                                )
+                            else:
+                                results['distance_to_center'].append(0)
+                            
+                            results['shape_area'].append(np.sum(mask_square))
+                            
+                            if 'Fluorescence Intensity' in self.selected_params:
+                                results['intensity_mean'].append(
+                                    self.calc_intensity_mean(image_square, mask_square)
+                                )
+                            else:
+                                results['intensity_mean'].append(0)
+                            
+                            if 'Local Texture' in self.selected_params:
+                                results['local_thickness'].append(
+                                    results['distance_to_edge'][-1]
+                                )
+                            else:
+                                results['local_thickness'].append(0)
+                            
+                            squares_processed += 1
         
         return results
     
@@ -256,6 +392,326 @@ class AnalysisWorker(QObject):
         center_x = np.mean(x_coords)
         center_y = np.mean(y_coords)
         return (center_x, center_y)
+    
+    def extract_colony_region_direct(self, image_data):
+        """Direct red pixel detection for exported colony images"""
+        self.console_output.emit(f"      Processing exported image: {image_data.shape}, dtype: {image_data.dtype}")
+        
+        # Handle RGB images with red borders
+        if len(image_data.shape) == 3:
+            self.console_output.emit("      RGB image - detecting red borders")
+            
+            # Convert to float for calculations
+            red_channel = image_data[:, :, 0].astype(np.float32)
+            green_channel = image_data[:, :, 1].astype(np.float32)
+            blue_channel = image_data[:, :, 2].astype(np.float32)
+            
+            # Detect red pixels: red significantly higher than green/blue
+            red_threshold = np.percentile(red_channel, 99)  # Top 1% of red values
+            red_mask = ((red_channel > green_channel * 2) & 
+                       (red_channel > blue_channel * 2) & 
+                       (red_channel > red_threshold * 0.8))
+            
+            red_pixel_count = np.sum(red_mask)
+            self.console_output.emit(f"      Found {red_pixel_count} red pixels")
+            
+            if red_pixel_count > 100:  # Minimum red pixels for border detection
+                # Find connected components of red pixels
+                try:
+                    labeled_regions = measure.label(red_mask)
+                    regions = measure.regionprops(labeled_regions)
+                    
+                    detected_boxes = []
+                    
+                    for region in regions:
+                        # Get bounding box
+                        min_row, min_col, max_row, max_col = region.bbox
+                        w = max_col - min_col
+                        h = max_row - min_row
+                        
+                        # Filter for reasonable colony sizes
+                        if (50 <= w <= 1000 and 50 <= h <= 1000 and region.area > 50):
+                            # Add padding around detected region
+                            padding = 10
+                            x = max(0, min_col - padding)
+                            y = max(0, min_row - padding)
+                            w = min(image_data.shape[1] - x, w + 2*padding)
+                            h = min(image_data.shape[0] - y, h + 2*padding)
+                            
+                            detected_boxes.append((x, y, w, h))
+                            self.console_output.emit(f"      Red region {len(detected_boxes)}: x={x}, y={y}, w={w}, h={h}")
+                    
+                    if detected_boxes:
+                        self.console_output.emit(f"      Found {len(detected_boxes)} red-bordered regions")
+                        
+                        # Convert to grayscale for biofilm analysis
+                        gray_image = cv2.cvtColor(image_data, cv2.COLOR_RGB2GRAY)
+                        combined_mask = np.zeros_like(gray_image, dtype=np.uint8)
+                        
+                        for i, (x, y, w, h) in enumerate(detected_boxes):
+                            # Extract and threshold biofilm region
+                            box_region = gray_image[y:y+h, x:x+w]
+                            threshold_value = np.mean(box_region) + np.std(box_region) * 0.5
+                            box_mask = (box_region > threshold_value).astype(np.uint8)
+                            combined_mask[y:y+h, x:x+w] = box_mask
+                            
+                            biofilm_pixels = np.sum(box_mask)
+                            self.console_output.emit(f"      Region {i+1}: {biofilm_pixels} biofilm pixels")
+                        
+                        total_biofilm = np.sum(combined_mask)
+                        self.console_output.emit(f"      Total: {total_biofilm} biofilm pixels in red regions")
+                        return combined_mask, detected_boxes
+                        
+                except Exception as e:
+                    self.console_output.emit(f"      Error in red detection: {str(e)}")
+            
+            # Convert to grayscale for fallback
+            gray_image = cv2.cvtColor(image_data, cv2.COLOR_RGB2GRAY)
+        else:
+            gray_image = image_data.copy()
+        
+        # Fallback: analyze entire image
+        self.console_output.emit("      No red regions found, analyzing entire image")
+        threshold_value = np.mean(gray_image) + np.std(gray_image) * 0.5
+        binary_mask = (gray_image > threshold_value).astype(np.uint8)
+        
+        biofilm_pixels = np.sum(binary_mask)
+        self.console_output.emit(f"      Fallback: {biofilm_pixels} biofilm pixels detected")
+        return binary_mask, []
+    
+    def extract_cropped_colony_region(self, image_data):
+        """Simple extraction for cropped colony exports - entire image is biofilm"""
+        self.console_output.emit(f"      Processing cropped colony export: {image_data.shape}, dtype: {image_data.dtype}")
+        
+        # Convert to grayscale if needed
+        if len(image_data.shape) == 3:
+            gray_image = cv2.cvtColor(image_data, cv2.COLOR_RGB2GRAY)
+        else:
+            gray_image = image_data.copy()
+        
+        # For cropped exports, the entire image should be analyzed
+        # Apply simple thresholding to identify biofilm pixels
+        threshold_value = np.mean(gray_image) + np.std(gray_image) * 0.3  # Lower threshold for biofilm
+        binary_mask = (gray_image > threshold_value).astype(np.uint8)
+        
+        biofilm_pixels = np.sum(binary_mask)
+        self.console_output.emit(f"      Cropped colony analysis: {biofilm_pixels} biofilm pixels in {gray_image.shape}")
+        
+        # Return the entire image area as the "detected box"
+        height, width = gray_image.shape
+        detected_box = [(0, 0, width, height)]  # x, y, w, h for entire image
+        
+        return binary_mask, detected_box
+    
+    def extract_outlined_colony_region(self, image_data):
+        """Extract colony region from outlined export format"""
+        self.console_output.emit(f"      Processing outlined export: {image_data.shape}, dtype: {image_data.dtype}")
+        
+        # Convert to grayscale if needed
+        if len(image_data.shape) == 3:
+            gray_image = cv2.cvtColor(image_data, cv2.COLOR_RGB2GRAY)
+        else:
+            gray_image = image_data.copy()
+        
+        # For outlined exports, the biofilm is typically in center region
+        # Find the main biofilm region using intensity-based detection
+        
+        # Use adaptive approach: find brightest connected region
+        height, width = gray_image.shape
+        
+        # Try different thresholds to find the main biofilm
+        for percentile in [90, 85, 80, 75]:
+            threshold = np.percentile(gray_image, percentile)
+            binary_mask = (gray_image > threshold).astype(np.uint8)
+            
+            # Find connected components
+            from skimage.measure import label, regionprops
+            labeled = label(binary_mask)
+            regions = regionprops(labeled)
+            
+            if regions:
+                # Find largest region (main biofilm)
+                largest_region = max(regions, key=lambda r: r.area)
+                
+                # Check if region is reasonable size (not too big = background, not too small = noise)
+                total_pixels = height * width
+                region_ratio = largest_region.area / total_pixels
+                
+                if 0.01 <= region_ratio <= 0.5:  # 1-50% of image
+                    # Create focused region around the biofilm
+                    min_row, min_col, max_row, max_col = largest_region.bbox
+                    
+                    # Add padding around biofilm
+                    padding = 50
+                    x = max(0, min_col - padding)
+                    y = max(0, min_row - padding)
+                    w = min(width - x, max_col - min_col + 2*padding)
+                    h = min(height - y, max_row - min_row + 2*padding)
+                    
+                    self.console_output.emit(f"      Found biofilm region: x={x}, y={y}, w={w}, h={h} (area={largest_region.area})")
+                    
+                    # Create mask for this region
+                    focused_mask = np.zeros_like(gray_image, dtype=np.uint8)
+                    region_image = gray_image[y:y+h, x:x+w]
+                    
+                    # Apply refined thresholding within biofilm region
+                    region_threshold = np.mean(region_image) + np.std(region_image) * 0.3
+                    region_mask = (region_image > region_threshold).astype(np.uint8)
+                    focused_mask[y:y+h, x:x+w] = region_mask
+                    
+                    biofilm_pixels = np.sum(focused_mask)
+                    self.console_output.emit(f"      Focused analysis: {biofilm_pixels} biofilm pixels in {w}x{h} region")
+                    
+                    return focused_mask, [(x, y, w, h)]
+        
+        # Fallback: analyze entire image if no good region found
+        self.console_output.emit("      No focused region found, using entire image")
+        threshold_value = np.mean(gray_image) + np.std(gray_image) * 0.5
+        binary_mask = (gray_image > threshold_value).astype(np.uint8)
+        
+        biofilm_pixels = np.sum(binary_mask)
+        self.console_output.emit(f"      Full image analysis: {biofilm_pixels} biofilm pixels")
+        return binary_mask, []
+    
+    def find_black_bordered_boxes(self, gray_image):
+        """Find black-bordered rectangular regions using edge detection"""
+        try:
+            self.console_output.emit("      Detecting red-bordered boxes from exported images...")
+            
+            # Validate input
+            if gray_image is None or gray_image.size == 0:
+                self.console_output.emit("      Error: Invalid image for box detection")
+                return []
+                
+            # Ensure image is grayscale
+            if len(gray_image.shape) != 2:
+                self.console_output.emit("      Error: Expected grayscale image for box detection")
+                return []
+            
+            # Debug: Check image properties before processing
+            self.console_output.emit(f"      Image dtype: {gray_image.dtype}, shape: {gray_image.shape}")
+            self.console_output.emit(f"      Image range: {gray_image.min():.2f} to {gray_image.max():.2f}")
+            
+            # Convert to 8-bit format required by OpenCV Canny
+            if gray_image.dtype != np.uint8:
+                self.console_output.emit(f"      Converting from {gray_image.dtype} to uint8...")
+                
+                try:
+                    if gray_image.dtype in [np.uint16, np.int16]:
+                        # For 16-bit images, scale down to 8-bit
+                        gray_8bit = (gray_image / 256).astype(np.uint8)
+                        self.console_output.emit("      Used 16-bit scaling")
+                    elif gray_image.dtype in [np.float32, np.float64]:
+                        # For float images, normalize to 0-1 then scale to 0-255
+                        gray_normalized = (gray_image - gray_image.min()) / (gray_image.max() - gray_image.min())
+                        gray_8bit = (gray_normalized * 255).astype(np.uint8)
+                        self.console_output.emit("      Used float normalization")
+                    else:
+                        # For other types, use OpenCV's normalize function
+                        gray_8bit = cv2.normalize(gray_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                        self.console_output.emit(f"      Used OpenCV normalize for {gray_image.dtype}")
+                        
+                    self.console_output.emit(f"      Converted: dtype={gray_8bit.dtype}, range={gray_8bit.min()}-{gray_8bit.max()}")
+                    
+                except Exception as conv_error:
+                    self.console_output.emit(f"      Conversion error: {str(conv_error)}")
+                    raise conv_error
+            else:
+                self.console_output.emit("      Image already uint8")
+                gray_8bit = gray_image
+            
+            try:
+                # Apply Gaussian blur to reduce noise
+                self.console_output.emit("      Applying Gaussian blur...")
+                blurred = cv2.GaussianBlur(gray_8bit, (3, 3), 0)
+                self.console_output.emit(f"      Blur successful: {blurred.dtype}")
+                
+                # Apply Canny edge detection with conservative thresholds
+                self.console_output.emit("      Applying Canny edge detection...")
+                edges = cv2.Canny(blurred, 50, 150)
+                self.console_output.emit(f"      Canny successful: {edges.shape}")
+                
+            except Exception as processing_error:
+                self.console_output.emit(f"      Processing error: {str(processing_error)}")
+                self.console_output.emit(f"      Image info at error: dtype={gray_8bit.dtype if 'gray_8bit' in locals() else 'unknown'}")
+                raise processing_error
+            
+            # Find contours
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if not contours:
+                self.console_output.emit("      No contours found")
+                return []
+            
+            detected_boxes = []
+            
+            for contour in contours:
+                try:
+                    # Check contour size first
+                    if cv2.contourArea(contour) < 400:  # Minimum area threshold
+                        continue
+                        
+                    # Approximate contour to polygon
+                    epsilon = 0.02 * cv2.arcLength(contour, True)
+                    approx = cv2.approxPolyDP(contour, epsilon, True)
+                    
+                    # Check if the approximated contour has 4 points (rectangular)
+                    if len(approx) == 4:
+                        # Get bounding rectangle
+                        x, y, w, h = cv2.boundingRect(contour)
+                        
+                        # Filter by size constraints (20-300 pixels for width/height)
+                        if (20 <= w <= 800 and 20 <= h <= 800 and 
+                            x > 0 and y > 0 and 
+                            x + w < gray_image.shape[1] and y + h < gray_image.shape[0]):
+                            
+                            # Check if the border is actually dark (black)
+                            try:
+                                border_region = gray_image[y:y+h, x:x+w]
+                                
+                                # Validate border region
+                                if border_region.size == 0:
+                                    continue
+                                
+                                # Sample border pixels (top, bottom, left, right edges)
+                                top_border = border_region[0, :]
+                                bottom_border = border_region[-1, :]
+                                left_border = border_region[:, 0]
+                                right_border = border_region[:, -1]
+                                
+                                # Combine all border pixels
+                                border_pixels = np.concatenate([top_border, bottom_border, left_border, right_border])
+                                
+                                # Check if border is significantly darker than image mean
+                                border_mean = np.mean(border_pixels)
+                                image_mean = np.mean(gray_image)
+                                
+                                # Red borders appear bright in grayscale conversion  
+                                # Look for borders that are brighter than average (red shows as bright)
+                                if border_mean > image_mean * 1.1:  # Border is brighter than average
+                                    detected_boxes.append((x, y, w, h))
+                                    self.console_output.emit(f"      Detected box: x={x}, y={y}, w={w}, h={h}, border_mean={border_mean:.1f}")
+                                    
+                            except Exception as border_error:
+                                self.console_output.emit(f"      Error checking border for contour: {str(border_error)}")
+                                continue
+                                
+                except Exception as contour_error:
+                    self.console_output.emit(f"      Error processing contour: {str(contour_error)}")
+                    continue
+            
+            # Sort boxes by area (largest first) and limit to reasonable number
+            detected_boxes.sort(key=lambda box: box[2] * box[3], reverse=True)
+            detected_boxes = detected_boxes[:10]  # Limit to top 10 boxes
+            
+            self.console_output.emit(f"      Final detection: {len(detected_boxes)} valid boxes")
+            return detected_boxes
+            
+        except Exception as e:
+            self.console_output.emit(f"      Error in box detection: {str(e)}")
+            import traceback
+            self.console_output.emit(f"      Traceback: {traceback.format_exc()}")
+            return []
 
 
 class CubeAnalysisWidget(QWidget):
@@ -672,7 +1128,12 @@ class CubeAnalysisWidget(QWidget):
     
     def on_colony_completed(self, colony_name, results):
         """Handle completion of single colony"""
-        self.console_area.append(f"✓ Completed {colony_name}")
+        # Log completion with basic stats from results
+        if results and 'square_positions' in next(iter(results.values()), {}):
+            total_squares = sum(len(tp_data.get('square_positions', [])) for tp_data in results.values())
+            self.console_area.append(f"✓ Completed {colony_name} - {total_squares} total squares analyzed")
+        else:
+            self.console_area.append(f"✓ Completed {colony_name}")
         self.console_area.ensureCursorVisible()
     
     
@@ -966,9 +1427,10 @@ class CubeAnalysisWidget(QWidget):
             
             results_text += "\n"
         
-            results_text += f"Total Analysis Summary:\n"
-            results_text += f"  Total squares analyzed: {total_squares}\n"
-            results_text += f"  Total time points: {total_timepoints}\n"
+        results_text += f"Total Analysis Summary:\n"
+        results_text += f"  Total squares analyzed: {total_squares}\n"
+        results_text += f"  Total time points: {total_timepoints}\n"
+        if len(self.analysis_results) > 0:
             results_text += f"  Average squares per colony: {total_squares / len(self.analysis_results):.1f}\n"
-            
-            self.results_area.setText(results_text)
+        
+        self.results_area.setText(results_text)
