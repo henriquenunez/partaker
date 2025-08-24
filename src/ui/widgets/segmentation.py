@@ -203,7 +203,8 @@ class SegmentationWidget(QWidget):
             SegmentationModels.CELLPOSE_BACT_PHASE,
             SegmentationModels.CELLPOSE_BACT_FLUOR,
             SegmentationModels.CELLPOSE,
-            SegmentationModels.UNET
+            SegmentationModels.UNET,
+            SegmentationModels.OMNIPOSE_BACT_PHASE_AFFINITY
         ])
 
     def select_all_positions(self):

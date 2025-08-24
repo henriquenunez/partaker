@@ -2711,7 +2711,8 @@ class App(QMainWindow):
                 SegmentationModels.CELLPOSE_BACT_PHASE,
                 SegmentationModels.CELLPOSE_BACT_FLUOR,
                 SegmentationModels.CELLPOSE,
-                SegmentationModels.UNET])
+                SegmentationModels.UNET,
+                SegmentationModels.OMNIPOSE_BACT_PHASE_AFFINITY])
         self.model_dropdown.currentIndexChanged.connect(
             lambda: self.image_data.segmentation_cache.with_model(
                 self.model_dropdown.currentText()))

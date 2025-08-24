@@ -25,6 +25,7 @@ class SegmentationModels:
     CELLPOSE_BACT_PHASE = 'bact_phase_cp3'
     CELLPOSE_BACT_FLUOR = 'bact_fluor_cp3'
     CELLPOSE_BACT_HHLN_MAR_14 = 'CP_20250314_100004_bact_phase_hhln'
+    OMNIPOSE_BACT_PHASE_AFFINITY = 'bact_phase_affinity'
 
     _instance = None
 
@@ -177,6 +178,104 @@ class SegmentationModels:
 
         return binary_mask_display
 
+    def segment_omnipose(self, images, progress, omnipose_inst):
+        """
+        Segment cells using Omnipose and return binary masks.
+
+        Parameters:
+        -----------
+        images : list of numpy.ndarray
+            The input images to segment.
+        progress : callable or Signal
+            A callback or signal to update progress.
+        omnipose_inst : cellpose_omni.models.CellposeModel
+            The Omnipose model instance.
+
+        Returns:
+        --------
+        binary_mask_display : numpy.ndarray
+            The binary masks for each segmented cell.
+        """
+        
+        # Ensure images are in the correct format
+        images = [img.squeeze() if img.ndim > 2 else img for img in images]
+        
+        # Apply Omnipose-specific normalization
+        try:
+            from cellpose_omni import transforms
+            from omnipose.utils import normalize99
+            
+            processed_images = []
+            for img in images:
+                # Move minimum dimension and convert to single channel if needed
+                img_proc = transforms.move_min_dim(img)
+                if len(img_proc.shape) > 2:
+                    img_proc = np.mean(img_proc, axis=-1)
+                # Apply normalize99 for optimal Omnipose performance
+                img_proc = normalize99(img_proc)
+                processed_images.append(img_proc)
+            
+            images = processed_images
+            
+        except ImportError:
+            print("Warning: cellpose_omni or omnipose not available, using standard preprocessing")
+            # Fallback to standard normalization
+            processed_images = []
+            for img in images:
+                if len(img.shape) > 2:
+                    img = np.mean(img, axis=-1)
+                img_normalized = (img - np.min(img)) / (np.max(img) - np.min(img))
+                processed_images.append(img_normalized)
+            images = processed_images
+
+        try:
+            # Define Omnipose parameters optimized for bacterial cells
+            params = {
+                'channels': None,  # Auto-detect channels
+                'rescale': None,   # No rescaling
+                'mask_threshold': -2,  # Optimized for bacterial cells
+                'flow_threshold': 0,   # Default flow threshold
+                'transparency': True,
+                'omni': True,         # Enable Omnipose reconstruction
+                'cluster': True,      # Use DBSCAN clustering
+                'resample': True,     # Run dynamics on rescaled grid
+                'verbose': False,
+                'tile': False,
+                'niter': None,        # Auto-calculate iterations
+                'augment': False,
+                'affinity_seg': True  # Enable affinity segmentation
+            }
+            
+            # Run segmentation with Omnipose
+            masks, _, _ = omnipose_inst.eval(images, **params)
+            masks = np.array(masks)
+
+            # Convert to binary masks for compatibility with existing pipeline
+            bw_images = np.where(masks > 0, 255, 0).astype(np.uint8)
+
+            # Add outlines (similar to cellpose processing)
+            from cellpose import utils
+            for i in range(len(masks)):
+                outlines = utils.masks_to_outlines(masks[i])
+                bw_images[i][outlines] = 0  # Set outline pixels to black
+
+            # Pad binary masks for visualization
+            binary_mask_display = np.pad(bw_images, pad_width=(
+                (0, 0), (5, 5), (5, 5)), mode='constant', constant_values=0)
+
+        except Exception as e:
+            print(f"Error during Omnipose segmentation: {e}")
+            return None
+
+        # Update progress if a callback is provided
+        if progress:
+            if callable(progress):
+                progress(len(images))
+            else:
+                progress.emit(len(images))
+
+        return binary_mask_display
+
     def segment_images(
             self,
             images,
@@ -187,10 +286,6 @@ class SegmentationModels:
 
         original_shape = images[0].shape
 
-        # Preprocess images if the flag is enabled
-        if preprocess:
-            images = [preprocess_image(img) for img in images]
-
         # Check if this is a Cellpose-based model
         is_cellpose_model = mode in [
             SegmentationModels.CELLPOSE,
@@ -198,6 +293,15 @@ class SegmentationModels:
             SegmentationModels.CELLPOSE_BACT_FLUOR,
             SegmentationModels.CELLPOSE_BACT_HHLN_MAR_14
         ]
+        
+        # Check if this is an Omnipose-based model
+        is_omnipose_model = mode in [
+            SegmentationModels.OMNIPOSE_BACT_PHASE_AFFINITY
+        ]
+
+        # Preprocess images if the flag is enabled (skip for Omnipose as it has custom preprocessing)
+        if preprocess and not is_omnipose_model:
+            images = [preprocess_image(img) for img in images]
 
         if mode == SegmentationModels.CELLPOSE:
             if SegmentationModels.CELLPOSE not in self.models:
@@ -251,6 +355,25 @@ class SegmentationModels:
 
             segmented_images = self.segment_unet(images)
 
+        elif mode == SegmentationModels.OMNIPOSE_BACT_PHASE_AFFINITY:
+            if SegmentationModels.OMNIPOSE_BACT_PHASE_AFFINITY not in self.models:
+                try:
+                    from cellpose_omni import models as omnipose_models
+                    from omnipose.gpu import use_gpu
+                    
+                    # Check GPU availability for Omnipose
+                    use_omnipose_gpu = use_gpu() if "PARTAKER_GPU" in os.environ and os.environ["PARTAKER_GPU"] == "1" else False
+                    
+                    self.models[self.OMNIPOSE_BACT_PHASE_AFFINITY] = omnipose_models.CellposeModel(
+                        gpu=use_omnipose_gpu, 
+                        model_type='bact_phase_affinity'
+                    )
+                except ImportError as e:
+                    raise ImportError(f"Omnipose not available. Please install with: pip install cellpose-omni omnipose. Error: {e}")
+
+            segmented_images = self.segment_omnipose(
+                images, progress, self.models[mode])
+
         else:
             raise ValueError(f"Invalid segmentation mode: {mode}")
 
@@ -261,8 +384,8 @@ class SegmentationModels:
                  original_shape[0]),
                 interpolation=cv2.INTER_NEAREST) for segmented_image in segmented_images]
 
-        # Apply erosion specifically for Cellpose models
-        if is_cellpose_model:
+        # Apply erosion specifically for Cellpose and Omnipose models
+        if is_cellpose_model or is_omnipose_model:
             resized_images = self.apply_morphological_erosion(resized_images)
 
         # Remove artifacts (optional step that can be enabled with a parameter)

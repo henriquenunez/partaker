@@ -379,7 +379,8 @@ class ViewAreaWidget(QWidget):
             SegmentationModels.CELLPOSE_BACT_PHASE,
             SegmentationModels.CELLPOSE_BACT_FLUOR,
             SegmentationModels.CELLPOSE,
-            SegmentationModels.UNET
+            SegmentationModels.UNET,
+            SegmentationModels.OMNIPOSE_BACT_PHASE_AFFINITY
         ])
         self.model_dropdown.currentTextChanged.connect(self.on_model_changed)
         self.current_model = self.model_dropdown.currentText()
