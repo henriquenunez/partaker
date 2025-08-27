@@ -10,26 +10,31 @@ class Experiment:
     
     Attributes:
         name (str): Name of the experiment
-        nd2_files (List[str]): List of paths to ND2 files
+        image_files (List[str]): List of paths to image files (ND2/TIFF)
         interval (float): Time step between frames in seconds
         rpu_values (Dict[str, float]): Dictionary of RPU values
+        tiff_types (Dict[str, str]): Dictionary mapping TIFF files to their types
+        nd2_files (List[str]): Legacy - List of paths to ND2 files
     """
     
-    def __init__(self, name: str, nd2_files: List[str], interval: float, 
-                 rpu_values: Dict[str, float] = None):
+    def __init__(self, name: str, image_files: List[str], interval: float, 
+                 rpu_values: Dict[str, float] = None, tiff_types: Dict[str, str] = None):
         """
         Initialize an experiment.
         
         Args:
             name: Name of the experiment
-            nd2_files: List of paths to ND2 files
+            image_files: List of paths to image files (ND2 or TIFF)
             interval: Time step between frames in seconds
             rpu_values: Dictionary of RPU values (optional)
+            tiff_types: Dictionary mapping TIFF files to their types (optional)
         """
         self.name = name
-        self.nd2_files = []
-        for _file in nd2_files:
-            self.add_nd2_file(_file)
+        self.image_files = image_files if image_files else []
+        self.tiff_types = tiff_types if tiff_types else {}
+        
+        # Legacy support
+        self.nd2_files = [f for f in self.image_files if f.lower().endswith('.nd2')]
         self.interval = interval
         self.rpu_values = rpu_values or {}
         

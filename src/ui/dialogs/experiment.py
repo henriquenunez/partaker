@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QVBoxLayout, QHBoxLayout,
                               QFormLayout)
 from PySide6.QtCore import Qt, Signal
 from pubsub import pub
+from .tiff_type_dialog import TIFFTypeDialog
 
 class ExperimentDialog(QDialog):
     # Signal that emits an Experiment instance when created
@@ -43,7 +44,7 @@ class ExperimentDialog(QDialog):
         main_layout.addWidget(details_group)
         
         # Files group
-        files_group = QGroupBox("ND2 Files")
+        files_group = QGroupBox("Image Files (ND2/TIFF)")
         files_layout = QVBoxLayout()
         
         # File list
@@ -80,13 +81,13 @@ class ExperimentDialog(QDialog):
         self.file_paths = []
     
     def add_file(self):
-        """Open file dialog to add ND2 files to the experiment"""
-        file_filter = "ND2 Files (*.nd2)"
+        """Open file dialog to add ND2 or TIFF files to the experiment"""
+        file_filter = "ND2 Files (*.nd2);;TIFF Files (*.tif *.tiff)"
         
         dialog = QFileDialog(self)
-        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
         dialog.setNameFilter(file_filter)
-        dialog.setWindowTitle("Select ND2 File")
+        dialog.setWindowTitle("Select ND2 or TIFF Files")
         dialog.finished.connect(self._on_file_dialog_finished)
         dialog.open()
     
@@ -96,16 +97,40 @@ class ExperimentDialog(QDialog):
         if result == QDialog.DialogCode.Accepted:
             selected_files = dialog.selectedFiles()
             if selected_files:
-                file_path = selected_files[0]
-                
-                # Check if file is already in our UI list
-                if file_path in self.file_paths:
-                    QMessageBox.warning(self, "Duplicate File", "This file is already in the list.")
-                    return
+                # Check for TIFF files - if found, show type selection dialog
+                tiff_files = [f for f in selected_files if f.lower().endswith(('.tif', '.tiff'))]
+                if tiff_files:
+                    self._handle_tiff_files(tiff_files)
+                else:
+                    # Handle ND2 files normally
+                    for file_path in selected_files:
+                        if file_path not in self.file_paths:
+                            self.file_paths.append(file_path)
+                            self.file_list_widget.addItem(os.path.basename(file_path))
+                        else:
+                            QMessageBox.warning(self, "Duplicate File", f"File {os.path.basename(file_path)} is already in the list.")
+    
+    def _handle_tiff_files(self, tiff_files):
+        """Handle TIFF file selection - show type selection dialog"""
+        # Show TIFF type selection dialog
+        type_dialog = TIFFTypeDialog(tiff_files, self)
+        if type_dialog.exec() == QDialog.DialogCode.Accepted:
+            tiff_type = type_dialog.get_selected_type()
+            
+            # Add files with type information
+            for file_path in tiff_files:
+                if file_path not in self.file_paths:
+                    self.file_paths.append(file_path)
+                    # Store TIFF type info for later use
+                    if not hasattr(self, 'tiff_types'):
+                        self.tiff_types = {}
+                    self.tiff_types[file_path] = tiff_type
                     
-                # Add to our internal list and UI
-                self.file_paths.append(file_path)
-                self.file_list_widget.addItem(os.path.basename(file_path))
+                    # Display with type info
+                    display_name = f"{os.path.basename(file_path)} ({tiff_type.replace('_', ' ').title()})"
+                    self.file_list_widget.addItem(display_name)
+                else:
+                    QMessageBox.warning(self, "Duplicate File", f"File {os.path.basename(file_path)} is already in the list.")
     
     def remove_file(self):
         """Remove selected file from the list"""
@@ -144,8 +169,9 @@ class ExperimentDialog(QDialog):
             # Create experiment - all validation happens in the Experiment class
             experiment = Experiment(
                 name=name,
-                nd2_files=self.file_paths,
-                interval=time_step
+                image_files=self.file_paths,
+                interval=time_step,
+                tiff_types=getattr(self, 'tiff_types', {})
             )
             
             # If we get here, creation was successful

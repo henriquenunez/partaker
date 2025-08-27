@@ -199,8 +199,15 @@ class App(QMainWindow):
     def on_exp_loaded(self, experiment: Experiment):
         self.curr_experiment = experiment
 
-        # Instance ImageData and load the first nd2 file
-        self.image_data = ImageData.load_nd2(experiment.nd2_files[0])
+        # Instance ImageData and load the first image file
+        first_file = experiment.image_files[0]
+        if first_file.lower().endswith('.nd2'):
+            self.image_data = ImageData.load_nd2(first_file)
+        else:
+            # TIFF file
+            tiff_type = experiment.tiff_types.get(first_file, 'single_sequence')
+            tiff_files = [f for f in experiment.image_files if f.lower().endswith(('.tif', '.tiff'))]
+            self.image_data = ImageData.load_tiff(tiff_files, tiff_type)
         pub.sendMessage("image_data_loaded", image_data=self.image_data)
 
     def load_from_folder(self):
@@ -2978,16 +2985,24 @@ class App(QMainWindow):
             
         import os
         import tifffile
+        from PySide6.QtWidgets import QMessageBox
+        
+        total_files = len(positions) * (time_end - time_start + 1)
+        converted = 0
         
         for pos in positions:
             for t in range(time_start, time_end + 1):
                 try:
-                    image = self.image_data.get_image(t, pos, channel)
+                    image = self.image_data._get_raw_image(t, pos, channel)
                     filename = f"pos_{pos:03d}_t_{t:04d}_ch_{channel}.tif"
                     filepath = os.path.join(output_folder, filename)
                     tifffile.imwrite(filepath, image)
+                    converted += 1
                 except Exception as e:
                     print(f"Error converting t={t}, pos={pos}: {e}")
+        
+        QMessageBox.information(self, "Export Complete", 
+                               f"Successfully exported {converted}/{total_files} TIF files to:\n{output_folder}")
 
     # In your main App class (app.py)
 
