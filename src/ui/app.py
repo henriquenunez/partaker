@@ -185,6 +185,7 @@ class App(QMainWindow):
         pub.subscribe(self.highlight_cell, "highlight_cell_requested")
 
         pub.subscribe(self.provide_image_data, "get_image_data")
+        pub.subscribe(self.convert_nd2_to_tif, "convert_nd2_to_tif")
 
     def provide_image_data(self, callback):
         """Provide the image_data object through the callback"""
@@ -2969,6 +2970,24 @@ class App(QMainWindow):
     def show_about_dialog(self):
         about_dialog = AboutDialog()
         about_dialog.exec_()
+        
+    def convert_nd2_to_tif(self, positions, time_start, time_end, channel, output_folder):
+        """Convert selected ND2 data to TIF files"""
+        if not hasattr(self, 'image_data') or not self.image_data:
+            return
+            
+        import os
+        import tifffile
+        
+        for pos in positions:
+            for t in range(time_start, time_end + 1):
+                try:
+                    image = self.image_data.get_image(t, pos, channel)
+                    filename = f"pos_{pos:03d}_t_{t:04d}_ch_{channel}.tif"
+                    filepath = os.path.join(output_folder, filename)
+                    tifffile.imwrite(filepath, image)
+                except Exception as e:
+                    print(f"Error converting t={t}, pos={pos}: {e}")
 
     # In your main App class (app.py)
 

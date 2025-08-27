@@ -148,8 +148,13 @@ class SegmentationWidget(QWidget):
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.cancel_segmentation)
         self.cancel_button.setEnabled(False)
+        
+        self.convert_tif_button = QPushButton("Convert to TIF")
+        self.convert_tif_button.clicked.connect(self.convert_to_tif)
+        
         controls_layout.addWidget(self.segment_button)
         controls_layout.addWidget(self.cancel_button)
+        controls_layout.addWidget(self.convert_tif_button)
         layout.addLayout(controls_layout)
 
         # Progress display
@@ -1091,3 +1096,20 @@ class SegmentationWidget(QWidget):
         colonies = self.colony_separator.get_all_colonies()
         self.colony_count_label.setText(f"Colonies detected: {len(colonies)}")
         self.show_overlay_btn.setEnabled(len(colonies) > 0)
+    
+    def convert_to_tif(self):
+        """Convert selected ND2 data to TIF files"""
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Output Folder")
+        if not folder_path:
+            return
+            
+        positions = self.get_selected_positions()
+        if not positions:
+            return
+            
+        pub.sendMessage("convert_nd2_to_tif", 
+                       positions=positions, 
+                       time_start=self.time_start_spin.value(),
+                       time_end=self.time_end_spin.value(),
+                       channel=self.channel_combo.currentIndex(),
+                       output_folder=folder_path)
