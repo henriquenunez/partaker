@@ -169,10 +169,11 @@ class TrackingWidget(QWidget):
             segmentation_cache_available = False
             if hasattr(self.image_data, 'segmentation_cache'):
                 if hasattr(self.image_data.segmentation_cache, 'with_model'):
-                    # Get current model name - adapt this to how your UI stores the current model
-                    current_model = "unet"  # Default value
-                    if hasattr(self, 'model_dropdown') and hasattr(self.model_dropdown, 'currentText'):
-                        current_model = self.model_dropdown.currentText()
+                    # Get current model name from the ViewAreaWidget
+                    current_model = pub.sendMessage("get_current_model", default="unet")
+                    if current_model is None:
+                        current_model = "unet"
+                    print(f"Using segmentation model: {current_model}")
                     
                     # Set up the segmentation cache with the current model
                     try:

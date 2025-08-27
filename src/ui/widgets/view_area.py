@@ -47,6 +47,7 @@ class ViewAreaWidget(QWidget):
         pub.subscribe(self.provide_current_param, "get_current_t")
         pub.subscribe(self.provide_current_param, "get_current_p")
         pub.subscribe(self.provide_current_param, "get_current_c")
+        pub.subscribe(self.provide_current_model, "get_current_model")
         pub.subscribe(self.on_segmentation_cache_miss, "segmentation_cache_miss")
         
         # Add colony overlay subscriptions
@@ -228,6 +229,12 @@ class ViewAreaWidget(QWidget):
         value = param_map.get(topic_name, default)
         print(f"ViewAreaWidget: Providing {topic_name}={value}")
         return value
+    
+    def provide_current_model(self, topic=pub.AUTO_TOPIC, default="unet"):
+        """Provide the current segmentation model"""
+        model = self.current_model if self.current_model else default
+        print(f"ViewAreaWidget: Providing current model: {model}")
+        return model
 
     def init_ui(self):
         """Initialize the user interface"""
