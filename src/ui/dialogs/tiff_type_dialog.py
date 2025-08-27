@@ -26,40 +26,16 @@ class TIFFTypeDialog(QDialog):
         type_group = QGroupBox("File Organization Type")
         type_layout = QVBoxLayout()
         
-        self.button_group = QButtonGroup()
-        
-        # Single sequence option
-        self.single_radio = QRadioButton("Single TIFF Sequence")
-        self.single_radio.setChecked(True)  # Default selection
-        type_layout.addWidget(self.single_radio)
-        
-        single_desc = QLabel("Multiple separate TIFF files, each containing one frame.\nNaming convention: image_001.tif, image_002.tif, image_003.tif...")
-        single_desc.setStyleSheet("color: gray; margin-left: 20px; margin-bottom: 10px;")
-        single_desc.setWordWrap(True)
-        type_layout.addWidget(single_desc)
-        
-        # Multi-frame option
-        self.multiframe_radio = QRadioButton("Multi-frame TIFF")
-        type_layout.addWidget(self.multiframe_radio)
-        
-        multi_desc = QLabel("Single TIFF file containing multiple frames/time points.\nExample: timelapse.tif (contains all time points)")
-        multi_desc.setStyleSheet("color: gray; margin-left: 20px; margin-bottom: 10px;")
-        multi_desc.setWordWrap(True)
-        type_layout.addWidget(multi_desc)
-        
-        # Series option
+        # Only Series option
         self.series_radio = QRadioButton("TIFF Series")
+        self.series_radio.setChecked(True)  # Always selected
+        self.series_radio.setEnabled(False)  # Disable since it's the only option
         type_layout.addWidget(self.series_radio)
         
         series_desc = QLabel("Multiple TIFF files with position/time/channel information in filenames.\nNaming convention: pos_001_t_000_ch_0.tif, pos_001_t_001_ch_0.tif...")
         series_desc.setStyleSheet("color: gray; margin-left: 20px; margin-bottom: 10px;")
         series_desc.setWordWrap(True)
         type_layout.addWidget(series_desc)
-        
-        # Add radio buttons to button group
-        self.button_group.addButton(self.single_radio, 0)
-        self.button_group.addButton(self.multiframe_radio, 1)
-        self.button_group.addButton(self.series_radio, 2)
         
         type_group.setLayout(type_layout)
         layout.addWidget(type_group)
@@ -99,13 +75,7 @@ class TIFFTypeDialog(QDialog):
         
     def get_selected_type(self):
         """Return the selected TIFF type"""
-        if self.single_radio.isChecked():
-            return "single_sequence"
-        elif self.multiframe_radio.isChecked():
-            return "multiframe"
-        elif self.series_radio.isChecked():
-            return "series"
-        return None
+        return "series"  # Only option available
         
     def accept(self):
         self.selected_type = self.get_selected_type()
@@ -117,52 +87,27 @@ class TIFFTypeDialog(QDialog):
         super().accept()
     
     def validate_filenames(self):
-        """Validate that filenames match the expected pattern for selected type"""
+        """Validate that filenames match the expected TIFF Series pattern"""
         from PySide6.QtWidgets import QMessageBox
         import re
         
-        selected_type = self.get_selected_type()
+        # Check for pos_XXX_t_XXX_ch_X.tif pattern
+        pattern = r'pos_(\d+)_t_(\d+)_ch_(\d+)\.tiff?$'
+        invalid_files = []
         
-        if selected_type == "series":
-            # Check for pos_XXX_t_XXX_ch_X.tif pattern
-            pattern = r'pos_(\d+)_t_(\d+)_ch_(\d+)\.tiff?$'
-            invalid_files = []
-            
-            for file_path in self.tiff_files:
-                filename = file_path.split('/')[-1]
-                if not re.search(pattern, filename):
-                    invalid_files.append(filename)
-            
-            if invalid_files:
-                QMessageBox.warning(
-                    self, "Invalid Filenames", 
-                    f"The following files don't match the expected pattern for TIFF Series:\n\n"
-                    f"Expected: pos_001_t_000_ch_0.tif\n\n"
-                    f"Invalid files:\n" + "\n".join(invalid_files[:5]) + 
-                    (f"\n... and {len(invalid_files) - 5} more" if len(invalid_files) > 5 else "")
-                )
-                return False
+        for file_path in self.tiff_files:
+            filename = file_path.split('/')[-1]
+            if not re.search(pattern, filename):
+                invalid_files.append(filename)
         
-        elif selected_type == "single_sequence":
-            # Check for simple numbering pattern (flexible)
-            # Accept: image_001.tif, frame_0001.tif, etc.
-            pattern = r'.*\d+\.tiff?$'
-            invalid_files = []
-            
-            for file_path in self.tiff_files:
-                filename = file_path.split('/')[-1]
-                if not re.search(pattern, filename):
-                    invalid_files.append(filename)
-            
-            if invalid_files:
-                QMessageBox.warning(
-                    self, "Invalid Filenames",
-                    f"The following files don't contain numbers for sequence ordering:\n\n"
-                    f"Expected: image_001.tif, frame_0001.tif, etc.\n\n"
-                    f"Invalid files:\n" + "\n".join(invalid_files[:5]) +
-                    (f"\n... and {len(invalid_files) - 5} more" if len(invalid_files) > 5 else "")
-                )
-                return False
+        if invalid_files:
+            QMessageBox.warning(
+                self, "Invalid Filenames", 
+                f"The following files don't match the expected pattern for TIFF Series:\n\n"
+                f"Expected: pos_001_t_000_ch_0.tif\n\n"
+                f"Invalid files:\n" + "\n".join(invalid_files[:5]) + 
+                (f"\n... and {len(invalid_files) - 5} more" if len(invalid_files) > 5 else "")
+            )
+            return False
         
-        # Multi-frame doesn't need filename validation (single file)
         return True
