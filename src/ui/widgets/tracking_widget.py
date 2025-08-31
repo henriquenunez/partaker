@@ -221,8 +221,8 @@ class TrackingWidget(QWidget):
                     f"Please run segmentation first.")
                 return
             
-            print(f"Found {len(available_frames)} frames with existing segmentation data")
-            print(f"Available frames: {available_frames}")
+            # print(f"Found {len(available_frames)} frames with existing segmentation data")
+            # print(f"Available frames: {available_frames}")
 
             # Update progress dialog for actual frames to process
             total_frames = len(available_frames)
@@ -242,13 +242,13 @@ class TrackingWidget(QWidget):
                 progress.setValue(frame_count)
                 frame_count += 1
 
-                print(f"Processing frame T:{t}, P:{p}, C:{selected_channel}")
+                # print(f"Processing frame T:{t}, P:{p}, C:{selected_channel}")
 
                 # Get existing segmentation results from MetricsService
                 metrics_df = self.metrics_service.query(time=t, position=p, channel=selected_channel)
                 
                 # Use existing segmentation results from MetricsService
-                print(f"Frame T:{t}, P:{p}: Using existing segmentation results from MetricsService")
+                # print(f"Frame T:{t}, P:{p}: Using existing segmentation results from MetricsService")
                 
                 # Get frame dimensions from image data
                 shape = self.image_data.data.shape
@@ -264,7 +264,7 @@ class TrackingWidget(QWidget):
                 # Apply connected component labeling
                 labeled_frame = label(binary_mask)
                 num_objects = np.max(labeled_frame)
-                print(f"Frame T:{t}, P:{p}: Using existing metrics - {num_objects} objects detected")
+                # print(f"Frame T:{t}, P:{p}: Using existing metrics - {num_objects} objects detected")
                 labeled_frames.append(labeled_frame)
 
             progress.setValue(total_frames)

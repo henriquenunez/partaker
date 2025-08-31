@@ -22,25 +22,56 @@ class MotilityDialog(QDialog):
     """
     
     def __init__(self, tracked_cells, lineage_tracks, image_data=None, parent=None):
-        super().__init__(parent)
-        
-        self.tracked_cells = tracked_cells
-        self.lineage_tracks = lineage_tracks
-        self.image_data = image_data  # Store image data for accessing segmentation cache
-        self.motility_metrics = None
-        
-        self.calibration = 0.07
-        
-        # Set dialog properties
-        self.setWindowTitle("Cell Motility Analysis")
-        self.setMinimumWidth(1200)  # Increased width for the velocity tab
-        self.setMinimumHeight(800)  # Increased height for the velocity tab
-        
-        # Initialize UI
-        self.init_ui()
-        
-        # Start analysis
-        self.analyze_motility()
+        try:
+            print("DEBUG: MotilityDialog.__init__ starting...")
+            super().__init__(parent)
+            print("DEBUG: Super().__init__ completed")
+            
+            self.tracked_cells = tracked_cells
+            self.lineage_tracks = lineage_tracks
+            self.image_data = image_data  # Store image data for accessing segmentation cache
+            self.motility_metrics = None
+            
+            print(f"DEBUG: tracked_cells: {len(tracked_cells) if tracked_cells else 0}")
+            print(f"DEBUG: lineage_tracks: {len(lineage_tracks) if lineage_tracks else 0}")
+            
+            self.calibration = 0.07
+            
+            # Set dialog properties
+            print("DEBUG: Setting dialog properties...")
+            self.setWindowTitle("Cell Motility Analysis")
+            self.setMinimumWidth(1200)  # Increased width for the velocity tab
+            self.setMinimumHeight(800)  # Increased height for the velocity tab
+            print("DEBUG: Dialog properties set")
+            
+            # Initialize UI
+            print("DEBUG: Initializing UI...")
+            self.init_ui()
+            print("DEBUG: UI initialized")
+            
+            # Start analysis
+            print("DEBUG: Starting analysis...")
+            try:
+                self.analyze_motility()
+                print("DEBUG: Analysis completed")
+            except Exception as analysis_error:
+                print(f"DEBUG: Analysis failed: {analysis_error}")
+                import traceback
+                traceback.print_exc()
+                
+                # Show error dialog instead of crashing
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.critical(self, "Motility Analysis Error", 
+                    f"Motility analysis failed:\n{str(analysis_error)}\n\nSee console for details.")
+                
+                # Still show the dialog but without analysis results
+                print("DEBUG: Showing dialog without analysis results")
+            
+        except Exception as e:
+            print(f"DEBUG: Error in MotilityDialog.__init__: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def init_ui(self):
         """Initialize the dialog UI"""
@@ -207,9 +238,10 @@ class MotilityDialog(QDialog):
     
     def analyze_motility(self):
         """Analyze cell motility"""
-        # Delegate to a worker function
-        from PySide6.QtWidgets import QApplication
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        print("DEBUG: analyze_motility() method called")
+        
+        # Skip cursor change to avoid Qt threading issues
+        print("DEBUG: Skipping cursor change to avoid threading issues")
         
         try:
             # Get current position and channel
@@ -239,23 +271,48 @@ class MotilityDialog(QDialog):
             print(f"Collected {len(all_cell_positions)} cell positions for visualization")
             
             # Calculate motility metrics
-            from tracking import enhanced_motility_index
-            self.motility_metrics = enhanced_motility_index(
-                self.tracked_cells, chamber_dimensions)
+            print("DEBUG: Starting motility analysis...")
+            print(f"DEBUG: tracked_cells type: {type(self.tracked_cells)}")
+            print(f"DEBUG: tracked_cells length: {len(self.tracked_cells) if self.tracked_cells else 0}")
             
-            # Create visualizations
-            self.create_visualizations(chamber_dimensions, all_cell_positions)
+            try:
+                print("DEBUG: Importing enhanced_motility_index...")
+                from tracking import enhanced_motility_index
+                print("DEBUG: Import successful")
+                
+                print("DEBUG: Calculating motility metrics...")
+                self.motility_metrics = enhanced_motility_index(
+                    self.tracked_cells, chamber_dimensions)
+                print("DEBUG: Motility metrics calculated successfully")
+                
+            except Exception as e:
+                print(f"DEBUG: Error in motility calculation: {e}")
+                raise
             
-            # Update summary
-            self.update_summary()
+            try:
+                print("DEBUG: Creating visualizations...")
+                # Create visualizations
+                self.create_visualizations(chamber_dimensions, all_cell_positions)
+                print("DEBUG: Visualizations created successfully")
+                
+            except Exception as e:
+                print(f"DEBUG: Error in visualization: {e}")
+                raise
+            
+            try:
+                print("DEBUG: Updating summary...")
+                # Update summary
+                self.update_summary()
+                print("DEBUG: Summary updated successfully")
+                
+            except Exception as e:
+                print(f"DEBUG: Error in summary update: {e}")
+                raise
             
         except Exception as e:
             import traceback
             traceback.print_exc()
             QMessageBox.warning(self, "Error", f"Failed to analyze motility: {str(e)}")
-            
-        finally:
-            QApplication.restoreOverrideCursor()
     
     def collect_cell_positions(self, p, c):
         """Collect cell positions from segmentation cache or tracks"""
