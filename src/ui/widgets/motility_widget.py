@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushB
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtCore import Qt
 import numpy as np
+import matplotlib
+matplotlib.use('Qt5Agg')  # Force matplotlib to use Qt5Agg backend
 import matplotlib.pyplot as plt
 from matplotlib.cm import plasma, viridis
 from matplotlib.colors import to_hex

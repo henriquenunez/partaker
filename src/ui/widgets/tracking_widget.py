@@ -2,6 +2,8 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QProgressDialog,
                                QMessageBox, QProgressBar)
 from PySide6.QtCore import Qt
+import matplotlib
+matplotlib.use('Qt5Agg')  # Force matplotlib to use Qt5Agg backend
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from skimage.measure import label

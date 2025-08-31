@@ -3,6 +3,9 @@ import sys
 import os
 import pickle
 
+# Configure matplotlib to use PySide6 before any matplotlib imports
+os.environ['QT_API'] = 'PySide6'
+
 import cv2
 import imageio.v3 as iio
 import matplotlib.pyplot as plt
