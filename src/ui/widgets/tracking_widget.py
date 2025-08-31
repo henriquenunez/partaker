@@ -17,9 +17,9 @@ class TrackingWidget(QWidget):
     Widget for basic cell tracking functionality.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, metrics_service=None):
         super().__init__(parent)
-        self.metrics_service = MetricsService()
+        self.metrics_service = metrics_service if metrics_service else MetricsService()
 
         # Initialize state variables
         self.tracked_cells = None
@@ -203,64 +203,69 @@ class TrackingWidget(QWidget):
             if not segmentation_cache_available:
                 print("Segmentation cache not available, will use metrics service for all frames")
             
-            # Prepare frames for tracking
+            # First, find all frames that actually have segmentation data
+            available_frames = []
+            for p in selected_positions:
+                for t in range(time_start, time_end + 1):
+                    metrics_df = self.metrics_service.query(time=t, position=p, channel=selected_channel)
+                    if not metrics_df.is_empty():
+                        available_frames.append((t, p))
+            
+            if not available_frames:
+                QMessageBox.warning(
+                    self, "No Segmentation Data", 
+                    f"No segmentation data found for the selected parameters.\n"
+                    f"Positions: {selected_positions}\n"
+                    f"Time range: {time_start}-{time_end}\n"
+                    f"Channel: {selected_channel}\n\n"
+                    f"Please run segmentation first.")
+                return
+            
+            print(f"Found {len(available_frames)} frames with existing segmentation data")
+            print(f"Available frames: {available_frames}")
+
+            # Update progress dialog for actual frames to process
+            total_frames = len(available_frames)
+            progress = QProgressDialog(
+                f"Processing {total_frames} frames with existing segmentation...", 
+                "Cancel", 0, total_frames, self)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.show()
+
+            # Prepare frames for tracking - only process frames with existing data
             labeled_frames = []
             frame_count = 0
             
-            # Process each selected position and time frame
-            for p in selected_positions:
-                for t in range(time_start, time_end + 1):
-                    if progress.wasCanceled():
-                        return
-                    progress.setValue(frame_count)
-                    frame_count += 1
+            for t, p in available_frames:
+                if progress.wasCanceled():
+                    return
+                progress.setValue(frame_count)
+                frame_count += 1
 
-                    print(f"Processing frame T:{t}, P:{p}, C:{selected_channel}")
+                print(f"Processing frame T:{t}, P:{p}, C:{selected_channel}")
 
-                    # Check for existing segmentation results in MetricsService first
-                    metrics_df = self.metrics_service.query(time=t, position=p, channel=selected_channel)
-                    segmented = None
-                    
-                    if not metrics_df.is_empty():
-                        # Use existing segmentation results from MetricsService
-                        print(f"Frame T:{t}, P:{p}: Using existing segmentation results from MetricsService")
-                        
-                        # Get frame dimensions from image data
-                        shape = self.image_data.data.shape
-                        frame_shape = (shape[-2], shape[-1])  # Last two dimensions are Y, X
-                        
-                        # Create binary mask from bounding boxes
-                        binary_mask = np.zeros(frame_shape, dtype=bool)
-                        
-                        for row in metrics_df.to_pandas().itertuples():
-                            y1, x1, y2, x2 = row.y1, row.x1, row.y2, row.x2
-                            binary_mask[y1:y2, x1:x2] = True
-                        
-                        # Apply connected component labeling
-                        labeled_frame = label(binary_mask)
-                        num_objects = np.max(labeled_frame)
-                        print(f"Frame T:{t}, P:{p}: Using existing metrics - {num_objects} objects detected")
-                        labeled_frames.append(labeled_frame)
-                        
-                    elif segmentation_cache_available:
-                        # Fall back to segmentation cache if no existing results
-                        try:
-                            print(f"Frame T:{t}, P:{p}: No existing segmentation, using segmentation cache")
-                            segmented = self.image_data.segmentation_cache[t, p, selected_channel]
-                            # Apply connected component labeling
-                            labeled = label(segmented)
-                            num_objects = np.max(labeled)
-                            labeled_frames.append(labeled)
-                        except Exception as cache_error:
-                            print(f"Error accessing segmentation cache for frame T:{t}, P:{p}: {str(cache_error)}")
-                            segmented = None
-                    
-                    if segmented is None and metrics_df.is_empty():
-                        # Last resort: create empty frame if no data available
-                        shape = self.image_data.data.shape
-                        frame_shape = (shape[-2], shape[-1])  # Last two dimensions are Y, X
-                        labeled_frames.append(np.zeros(frame_shape, dtype=np.int32))
-                        print(f"Frame T:{t}, P:{p}: No segmentation data available, adding empty frame")
+                # Get existing segmentation results from MetricsService
+                metrics_df = self.metrics_service.query(time=t, position=p, channel=selected_channel)
+                
+                # Use existing segmentation results from MetricsService
+                print(f"Frame T:{t}, P:{p}: Using existing segmentation results from MetricsService")
+                
+                # Get frame dimensions from image data
+                shape = self.image_data.data.shape
+                frame_shape = (shape[-2], shape[-1])  # Last two dimensions are Y, X
+                
+                # Create binary mask from bounding boxes
+                binary_mask = np.zeros(frame_shape, dtype=bool)
+                
+                for row in metrics_df.to_pandas().itertuples():
+                    y1, x1, y2, x2 = row.y1, row.x1, row.y2, row.x2
+                    binary_mask[y1:y2, x1:x2] = True
+                
+                # Apply connected component labeling
+                labeled_frame = label(binary_mask)
+                num_objects = np.max(labeled_frame)
+                print(f"Frame T:{t}, P:{p}: Using existing metrics - {num_objects} objects detected")
+                labeled_frames.append(labeled_frame)
 
             progress.setValue(total_frames)
 

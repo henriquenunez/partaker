@@ -11,10 +11,10 @@ class TrackingManager(QWidget):
     Manager widget that coordinates the tracking, lineage, and motility widgets.
     """
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, metrics_service=None):
         super().__init__(parent)
         
-        self.tracking_widget = TrackingWidget()
+        self.tracking_widget = TrackingWidget(metrics_service=metrics_service)
         
         # Initialize UI
         layout = QVBoxLayout(self)

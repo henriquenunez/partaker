@@ -2899,7 +2899,7 @@ class App(QMainWindow):
         self.populationTab = PopulationWidget()
         self.morphologyTab = MorphologyWidget()
         self.morphologyVisualizationTab = QWidget()
-        self.tracking_manager = TrackingManager()
+        self.tracking_manager = TrackingManager(metrics_service=self.metrics_service)
 
         # Add tabs to the QTabWidget
         self.tab_widget.addTab(self.segmentation_tab, "Segmentation")
