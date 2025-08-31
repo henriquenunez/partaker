@@ -48,6 +48,7 @@ class ViewAreaWidget(QWidget):
         pub.subscribe(self.provide_current_param, "get_current_p")
         pub.subscribe(self.provide_current_param, "get_current_c")
         pub.subscribe(self.provide_current_model, "get_current_model")
+        pub.subscribe(self.provide_current_model_callback, "get_current_model_callback")
         pub.subscribe(self.on_segmentation_cache_miss, "segmentation_cache_miss")
         
         # Add colony overlay subscriptions
@@ -235,6 +236,12 @@ class ViewAreaWidget(QWidget):
         model = self.current_model if self.current_model else default
         print(f"ViewAreaWidget: Providing current model: {model}")
         return model
+    
+    def provide_current_model_callback(self, callback):
+        """Provide the current segmentation model via callback"""
+        model = self.current_model if self.current_model else "bact_phase_cp3"
+        print(f"ViewAreaWidget: Providing current model via callback: {model}")
+        callback(model)
 
     def init_ui(self):
         """Initialize the user interface"""

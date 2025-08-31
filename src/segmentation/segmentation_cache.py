@@ -17,6 +17,7 @@ class SegmentationCache:
         self.model_name = None
 
     def with_model(self, model_name):
+        print(f"DEBUG: SegmentationCache.with_model() received: {model_name}")
         self.model_name = model_name
         if model_name not in self.mmap_arrays_idx:
             self.mmap_arrays_idx[model_name] = (

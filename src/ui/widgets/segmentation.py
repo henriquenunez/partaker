@@ -45,6 +45,9 @@ class SegmentationWidget(QWidget):
         # Subscribe to relevant topics
         pub.subscribe(self.on_image_data_loaded, "image_data_loaded")
         pub.subscribe(self.on_image_ready, "image_ready")
+        
+        # Subscribe to provide segmentation parameters to other widgets
+        pub.subscribe(self.provide_segmentation_params, "get_segmentation_params")
 
         # Timer for handling segmentation requests with a slight delay
         self.request_timer = QTimer(self)
@@ -53,6 +56,25 @@ class SegmentationWidget(QWidget):
         
         pub.subscribe(self.on_polygon_point_added, "polygon_point_added")
 
+    
+    def provide_segmentation_params(self, callback):
+        """Provide segmentation parameters to other widgets via callback"""
+        # Get selected positions
+        selected_positions = []
+        for item in self.position_list.selectedItems():
+            pos = int(item.text().split(" ")[1])
+            selected_positions.append(pos)
+        
+        params = {
+            'positions': selected_positions,
+            'time_start': self.time_start_spin.value(),
+            'time_end': self.time_end_spin.value(),
+            'channel': self.channel_combo.currentIndex(),
+            'model': self.model_combo.currentText() if hasattr(self, 'model_combo') else 'bact_phase_cp3'
+        }
+        
+        print(f"SegmentationWidget: Providing parameters - {params}")
+        callback(params)
     
     def on_polygon_point_added(self, x, y, total_points):
         """Handle when a polygon point is added"""

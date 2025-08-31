@@ -142,26 +142,37 @@ class TrackingWidget(QWidget):
                 self, "Error", "Tracking requires an ND2 dataset.")
             return
 
-        # Get current position and channel with proper handling of None values
-        p = pub.sendMessage("get_current_p", default=0)
-        if p is None:
-            p = 0
-            print(f"Current position was None, defaulting to position {p}")
+        # Get segmentation parameters from segmentation widget
+        segmentation_params = None
+        def receive_params(params):
+            nonlocal segmentation_params
+            segmentation_params = params
         
-        c = pub.sendMessage("get_current_c", default=0)
-        if c is None:
-            c = 0
-            print(f"Current channel was None, defaulting to channel {c}")
+        pub.sendMessage("get_segmentation_params", callback=receive_params)
         
-        print(f"Using position={p}, channel={c}")
+        if not segmentation_params or not segmentation_params['positions']:
+            QMessageBox.warning(
+                self, "Error", 
+                "No segmentation parameters found. Please run segmentation first and select positions/time range.")
+            return
+        
+        # Use segmentation parameters
+        selected_positions = segmentation_params['positions']
+        time_start = segmentation_params['time_start'] 
+        time_end = segmentation_params['time_end']
+        selected_channel = segmentation_params['channel']
+        
+        print(f"Using segmentation parameters:")
+        print(f"  Positions: {selected_positions}")
+        print(f"  Time range: {time_start} - {time_end}")
+        print(f"  Channel: {selected_channel}")
 
         try:
-            # Get shape from image data
-            shape = self.image_data.data.shape
-            t_max = shape[0]  # First dimension should be time
+            # Calculate total frames to process
+            total_frames = len(selected_positions) * (time_end - time_start + 1)
 
             progress = QProgressDialog(
-                "Preparing frames for tracking...", "Cancel", 0, t_max, self)
+                "Preparing frames for tracking...", "Cancel", 0, total_frames, self)
             progress.setWindowModality(Qt.WindowModal)
             progress.show()
 
@@ -169,10 +180,14 @@ class TrackingWidget(QWidget):
             segmentation_cache_available = False
             if hasattr(self.image_data, 'segmentation_cache'):
                 if hasattr(self.image_data.segmentation_cache, 'with_model'):
-                    # Get current model name from the ViewAreaWidget
-                    current_model = pub.sendMessage("get_current_model", default="unet")
-                    if current_model is None:
-                        current_model = "unet"
+                    # Get current model name from the ViewAreaWidget using callback pattern
+                    current_model = "bact_phase_cp3"  # Default to correct model
+                    def receive_model(model_name):
+                        nonlocal current_model
+                        if model_name:
+                            current_model = model_name
+                    
+                    pub.sendMessage("get_current_model_callback", callback=receive_model)
                     print(f"Using segmentation model: {current_model}")
                     
                     # Set up the segmentation cache with the current model
@@ -190,37 +205,29 @@ class TrackingWidget(QWidget):
             
             # Prepare frames for tracking
             labeled_frames = []
+            frame_count = 0
             
-            for i in range(t_max):
-                if progress.wasCanceled():
-                    return
-                progress.setValue(i)
+            # Process each selected position and time frame
+            for p in selected_positions:
+                for t in range(time_start, time_end + 1):
+                    if progress.wasCanceled():
+                        return
+                    progress.setValue(frame_count)
+                    frame_count += 1
 
-                # Try to use segmentation cache first (like old architecture)
-                segmented = None
-                
-                if segmentation_cache_available:
-                    try:
-                        # Get segmented image from cache - exactly like old architecture
-                        segmented = self.image_data.segmentation_cache[i, p, c]
-                    except Exception as cache_error:
-                        print(f"Error accessing segmentation cache for frame {i}: {str(cache_error)}")
-                        segmented = None
-                
-                if segmented is not None:
-                    # Apply connected component labeling - exactly like old architecture
-                    labeled = label(segmented)
-                    num_objects = np.max(labeled)
-                    labeled_frames.append(labeled)
-                else:
-                    # Fall back to metrics-based approach if segmentation cache not available
-                    print(f"Frame {i}: Segmentation cache not available, falling back to metrics")
-                    
-                    metrics_df = self.metrics_service.query(time=i, position=p, channel=c)
+                    print(f"Processing frame T:{t}, P:{p}, C:{selected_channel}")
+
+                    # Check for existing segmentation results in MetricsService first
+                    metrics_df = self.metrics_service.query(time=t, position=p, channel=selected_channel)
+                    segmented = None
                     
                     if not metrics_df.is_empty():
-                        # Create frame dimensions
-                        frame_shape = (shape[2], shape[3]) if len(shape) == 4 else (shape[3], shape[4])
+                        # Use existing segmentation results from MetricsService
+                        print(f"Frame T:{t}, P:{p}: Using existing segmentation results from MetricsService")
+                        
+                        # Get frame dimensions from image data
+                        shape = self.image_data.data.shape
+                        frame_shape = (shape[-2], shape[-1])  # Last two dimensions are Y, X
                         
                         # Create binary mask from bounding boxes
                         binary_mask = np.zeros(frame_shape, dtype=bool)
@@ -232,16 +239,30 @@ class TrackingWidget(QWidget):
                         # Apply connected component labeling
                         labeled_frame = label(binary_mask)
                         num_objects = np.max(labeled_frame)
-                        print(f"Frame {i}: Using metrics fallback - {num_objects} objects detected")
-                        
+                        print(f"Frame T:{t}, P:{p}: Using existing metrics - {num_objects} objects detected")
                         labeled_frames.append(labeled_frame)
-                    else:
-                        # If no metrics for this frame, add an empty frame
-                        frame_shape = (shape[2], shape[3]) if len(shape) == 4 else (shape[3], shape[4])
+                        
+                    elif segmentation_cache_available:
+                        # Fall back to segmentation cache if no existing results
+                        try:
+                            print(f"Frame T:{t}, P:{p}: No existing segmentation, using segmentation cache")
+                            segmented = self.image_data.segmentation_cache[t, p, selected_channel]
+                            # Apply connected component labeling
+                            labeled = label(segmented)
+                            num_objects = np.max(labeled)
+                            labeled_frames.append(labeled)
+                        except Exception as cache_error:
+                            print(f"Error accessing segmentation cache for frame T:{t}, P:{p}: {str(cache_error)}")
+                            segmented = None
+                    
+                    if segmented is None and metrics_df.is_empty():
+                        # Last resort: create empty frame if no data available
+                        shape = self.image_data.data.shape
+                        frame_shape = (shape[-2], shape[-1])  # Last two dimensions are Y, X
                         labeled_frames.append(np.zeros(frame_shape, dtype=np.int32))
-                        print(f"Frame {i}: No data found, adding empty frame")
+                        print(f"Frame T:{t}, P:{p}: No segmentation data available, adding empty frame")
 
-            progress.setValue(t_max)
+            progress.setValue(total_frames)
 
             if not labeled_frames:
                 QMessageBox.warning(
