@@ -27,56 +27,416 @@ class MotilityDialog(QDialog):
     """
     
     def __init__(self, tracked_cells, lineage_tracks, image_data=None, parent=None):
-        try:
-            print("DEBUG: MotilityDialog.__init__ starting...")
-            super().__init__(parent)
-            print("DEBUG: Super().__init__ completed")
-            
-            self.tracked_cells = tracked_cells
-            self.lineage_tracks = lineage_tracks
-            self.image_data = image_data  # Store image data for accessing segmentation cache
-            self.motility_metrics = None
-            
-            print(f"DEBUG: tracked_cells: {len(tracked_cells) if tracked_cells else 0}")
-            print(f"DEBUG: lineage_tracks: {len(lineage_tracks) if lineage_tracks else 0}")
-            
-            self.calibration = 0.07
-            
-            # Set dialog properties
-            print("DEBUG: Setting dialog properties...")
-            self.setWindowTitle("Cell Motility Analysis")
-            self.setMinimumWidth(1200)  # Increased width for the velocity tab
-            self.setMinimumHeight(800)  # Increased height for the velocity tab
-            print("DEBUG: Dialog properties set")
-            
-            # Initialize UI
-            print("DEBUG: Initializing UI...")
-            self.init_ui()
-            print("DEBUG: UI initialized")
-            
-            # Start analysis
-            print("DEBUG: Starting analysis...")
+        super().__init__(parent)
+        
+        self.tracked_cells = tracked_cells
+        self.lineage_tracks = lineage_tracks
+        self.image_data = image_data
+        self.motility_metrics = None
+        
+        self.animation_button = None 
+        self.animation_data_validated = False
+        
+        # ADD THIS LINE - Import and initialize MetricsService
+        from metrics_service import MetricsService
+        self.metrics_service = MetricsService()
+        
+        self.calibration = 0.07
+        
+        # Set dialog properties
+        self.setWindowTitle("Cell Motility Analysis")
+        self.setMinimumWidth(1200)
+        self.setMinimumHeight(800)
+        
+        # Initialize UI
+        self.init_ui()
+        
+        # ADD THIS LINE HERE - after init_ui() creates the tab_widget
+        self.create_environmental_analysis()
+        
+        # Start analysis
+        self.analyze_motility()
+        
+        
+        
+    def create_environmental_analysis(self):
+        """Create environmental correlation analysis interface"""
+        
+        # Create the environmental tab
+        self.environmental_tab = QWidget()
+        self.environmental_layout = QVBoxLayout(self.environmental_tab)
+        self.tab_widget.addTab(self.environmental_tab, "Environmental Analysis")
+        
+        # Import controls
+        import_layout = QHBoxLayout()
+        
+        self.import_button = QPushButton("Import Environmental Data")
+        self.import_button.clicked.connect(self.import_environmental_data)
+        import_layout.addWidget(self.import_button)
+        
+        self.env_data_label = QLabel("No environmental data loaded")
+        import_layout.addWidget(self.env_data_label)
+        
+        self.environmental_layout.addLayout(import_layout)
+        
+        # Analysis controls
+        analysis_layout = QHBoxLayout()
+        
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems([
+            "All Cells",
+            "Mature Cells Only (position >= 7)", 
+            "First Generation Only",
+            "Extreme Conditions Only"
+        ])
+        analysis_layout.addWidget(QLabel("Filter:"))
+        analysis_layout.addWidget(self.filter_combo)
+        
+        self.analyze_button = QPushButton("Run Analysis")
+        self.analyze_button.clicked.connect(self.run_environmental_analysis)
+        self.analyze_button.setEnabled(False)
+        analysis_layout.addWidget(self.analyze_button)
+        
+        self.environmental_layout.addLayout(analysis_layout)
+        
+        # Results area
+        self.env_figure = plt.figure(figsize=(16, 10))  # Bigger figure
+        self.env_canvas = FigureCanvas(self.env_figure)
+        self.environmental_layout.addWidget(self.env_canvas)
+
+    def import_environmental_data(self):
+        """Import Hamed's merged dataset with pressure and velocity data"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import Environmental Data", 
+            "", "CSV Files (*.csv)")
+        
+        if file_path:
             try:
-                self.analyze_motility()
-                print("DEBUG: Analysis completed")
-            except Exception as analysis_error:
-                print(f"DEBUG: Analysis failed: {analysis_error}")
-                import traceback
-                traceback.print_exc()
+                import pandas as pd
+                self.env_data = pd.read_csv(file_path)
                 
-                # Show error dialog instead of crashing
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.critical(self, "Motility Analysis Error", 
-                    f"Motility analysis failed:\n{str(analysis_error)}\n\nSee console for details.")
+                # Verify required columns exist
+                required_cols = ['pressure_df', 'velocity_df2', 'cell_id', 'time_point', 
+                            'position_in_track', 'morphology_class']
+                missing_cols = [col for col in required_cols if col not in self.env_data.columns]
                 
-                # Still show the dialog but without analysis results
-                print("DEBUG: Showing dialog without analysis results")
+                if missing_cols:
+                    QMessageBox.warning(self, "Missing Columns", 
+                        f"Missing required columns: {missing_cols}")
+                    return
+                
+                self.env_data_label.setText(f"Loaded {len(self.env_data)} records")
+                self.analyze_button.setEnabled(True)
+                
+                QMessageBox.information(self, "Success", 
+                    f"Loaded environmental data with {len(self.env_data)} cell records")
+                    
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", f"Failed to import data: {str(e)}")
+
+    def filter_environmental_data(self):
+        """Apply selected filter to environmental data"""
+        filter_type = self.filter_combo.currentText()
+        
+        if filter_type == "All Cells":
+            return self.env_data
+        
+        elif filter_type == "Mature Cells Only (position >= 7)":
+            return self.env_data[self.env_data['position_in_track'] >= 7]
+        
+        elif filter_type == "First Generation Only":
+            return self.env_data[self.env_data['parent_id'].isna()]
+        
+        elif filter_type == "Extreme Conditions Only":
+            # Top and bottom 10% of pressure and velocity conditions
+            pressure_high = self.env_data['pressure_df'].quantile(0.9)
+            pressure_low = self.env_data['pressure_df'].quantile(0.1)
+            velocity_high = self.env_data['velocity_df2'].quantile(0.9)
+            velocity_low = self.env_data['velocity_df2'].quantile(0.1)
             
-        except Exception as e:
-            print(f"DEBUG: Error in MotilityDialog.__init__: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+            extreme_conditions = (
+                (self.env_data['pressure_df'] >= pressure_high) |
+                (self.env_data['pressure_df'] <= pressure_low) |
+                (self.env_data['velocity_df2'] >= velocity_high) |
+                (self.env_data['velocity_df2'] <= velocity_low)
+            )
+            
+            return self.env_data[extreme_conditions]
+
+
+    def run_environmental_analysis(self):
+        """Run the corrected environmental correlation analysis using morphology classes"""
+        
+        if not hasattr(self, 'env_data'):
+            QMessageBox.warning(self, "No Data", "Please import environmental data first")
+            return
+        
+        # Filter data based on selection
+        filtered_data = self.filter_environmental_data()
+        
+        if len(filtered_data) == 0:
+            QMessageBox.warning(self, "No Data", "No data remaining after filtering")
+            return
+        
+        # Clear previous plots
+        self.env_figure.clear()
+        
+        # Set figure size larger and create better spaced layout
+        self.env_figure.set_size_inches(16, 10)
+        
+        # Create 2x2 subplot layout with much more spacing
+        gs = self.env_figure.add_gridspec(2, 2, 
+                                        hspace=0.5,    # More vertical space
+                                        wspace=0.3,    # More horizontal space  
+                                        left=0.06,     # Less left margin
+                                        right=0.75,    # More space for legends
+                                        top=0.95,      # Less top margin
+                                        bottom=0.12)   # More bottom space
+        
+        # Plot 1: Pressure vs Morphology Distribution
+        ax1 = self.env_figure.add_subplot(gs[0, 0])
+        self.plot_morphology_vs_environment(
+            filtered_data, 'pressure_df', 'Pressure', ax1)
+        
+        # Plot 2: Velocity vs Morphology Distribution  
+        ax2 = self.env_figure.add_subplot(gs[0, 1])
+        self.plot_morphology_vs_environment(
+            filtered_data, 'velocity_df2', 'Velocity', ax2)
+        
+        # Plot 3: Pressure Binned Analysis
+        ax3 = self.env_figure.add_subplot(gs[1, 0])
+        self.plot_binned_morphology_analysis(
+            filtered_data, 'pressure_df', 'Pressure', ax3)
+        
+        # Plot 4: Velocity Binned Analysis
+        ax4 = self.env_figure.add_subplot(gs[1, 1])
+        self.plot_binned_morphology_analysis(
+            filtered_data, 'velocity_df2', 'Velocity', ax4)
+        
+        # Don't use tight_layout as it interferes with our custom spacing
+        self.env_canvas.draw()
+        
+        # Show statistical summary
+        self.show_morphology_correlation_summary(filtered_data)
+    
+    def plot_morphology_vs_environment(self, data, env_col, env_label, ax):
+        """Plot morphology class distribution vs environmental variable with better formatting"""
+        
+        # Define colors for morphology classes
+        color_map = {
+            'Healthy': '#1f77b4',
+            'Divided': '#ff7f0e', 
+            'Artifact': '#2ca02c',
+            'Elongated': '#d62728',
+            'Deformed': '#9467bd'
+        }
+        
+        # Order morphology classes consistently
+        ordered_classes = ['Healthy', 'Divided', 'Artifact', 'Elongated', 'Deformed']
+        available_classes = [cls for cls in ordered_classes if cls in data['morphology_class'].unique()]
+        
+        # Create y-positions for each class
+        y_positions = {cls: i for i, cls in enumerate(available_classes)}
+        
+        for morph_class in available_classes:
+            if morph_class in color_map:
+                class_data = data[data['morphology_class'] == morph_class]
+                y_vals = [y_positions[morph_class]] * len(class_data)
+                
+                ax.scatter(class_data[env_col], y_vals, 
+                        alpha=0.6, s=6, color=color_map[morph_class], 
+                        label=f'{morph_class} (n={len(class_data)})')
+        
+        # Customize plot with smaller fonts
+        ax.set_xlabel(env_label, fontsize=10)
+        ax.set_ylabel('Morphology Class', fontsize=10)
+        ax.set_title(f'{env_label} vs Morphology Class', fontsize=11, pad=15)
+        
+        # Set y-axis to show class names
+        ax.set_yticks(range(len(available_classes)))
+        ax.set_yticklabels(available_classes, fontsize=9)
+        
+        # Smaller tick labels
+        ax.tick_params(axis='x', labelsize=8)
+        
+        # Add grid
+        ax.grid(True, alpha=0.3, axis='x')
+        ax.set_axisbelow(True)
+        
+        # Smaller legend positioned better
+        ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=8)
+
+    def plot_binned_morphology_analysis(self, data, env_col, env_label, ax):
+        """Plot morphology class proportions across environmental bins with better formatting"""
+        
+        import numpy as np
+        import pandas as pd
+        
+        # Create 5 bins across the environmental variable range
+        data_copy = data.copy()
+        data_copy[f'{env_col}_bin'] = pd.cut(data_copy[env_col], bins=5)
+        
+        # Calculate proportions for each bin
+        bin_proportions = data_copy.groupby([f'{env_col}_bin', 'morphology_class']).size().unstack(fill_value=0)
+        
+        # Convert to percentages
+        bin_percentages = bin_proportions.div(bin_proportions.sum(axis=1), axis=0) * 100
+        
+        # Define colors (same order as legend)
+        color_map = {
+            'Healthy': '#1f77b4',
+            'Divided': '#ff7f0e', 
+            'Artifact': '#2ca02c',
+            'Elongated': '#d62728',
+            'Deformed': '#9467bd'
+        }
+        
+        # Ensure consistent ordering of morphology classes
+        ordered_classes = ['Healthy', 'Divided', 'Artifact', 'Elongated', 'Deformed']
+        available_classes = [cls for cls in ordered_classes if cls in bin_percentages.columns]
+        
+        # Plot stacked bar chart
+        bottom = np.zeros(len(bin_percentages))
+        bar_width = 0.7  # Slightly narrower bars
+        
+        for morph_class in available_classes:
+            values = bin_percentages[morph_class].values
+            ax.bar(range(len(bin_percentages)), values, bottom=bottom,
+                label=morph_class, color=color_map[morph_class], width=bar_width)
+            bottom += values
+        
+        # Customize plot appearance with smaller fonts
+        ax.set_xlabel(f'{env_label} Range (Low → High)', fontsize=10)
+        ax.set_ylabel('Percentage of Cells', fontsize=10)
+        ax.set_title(f'Morphology Distribution Across {env_label} Ranges', fontsize=11, pad=15)
+        
+        # Fix x-axis with smaller labels
+        ax.set_xticks(range(len(bin_percentages)))
+        ax.set_xticklabels([f'Bin {i+1}' for i in range(len(bin_percentages))], fontsize=9)
+        
+        # Set y-axis to 0-100% with smaller tick labels
+        ax.set_ylim(0, 100)
+        ax.set_yticks(range(0, 101, 20))
+        ax.tick_params(axis='y', labelsize=8)
+        
+        # Add grid for better readability
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_axisbelow(True)
+        
+        # Smaller legend positioned outside plot area
+        ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=8)
+        
+        # Add bin range annotations at the bottom with smaller text
+        bin_ranges = []
+        for bin_interval in bin_percentages.index:
+            left = bin_interval.left
+            right = bin_interval.right
+            bin_ranges.append(f'{left:.1f}-{right:.1f}')  # Less decimal places
+        
+        # Add secondary x-axis labels for ranges with smaller font
+        for i, range_text in enumerate(bin_ranges):
+            ax.text(i, -7, range_text, ha='center', va='top', fontsize=7, rotation=0)
+    
+    
+    def show_morphology_correlation_summary(self, data):
+        """Show statistical summary of morphology-environment relationships"""
+        
+        import numpy as np
+        import pandas as pd
+        from scipy import stats
+        
+        summary_results = []
+        
+        # Analyze pressure effects
+        pressure_analysis = self.analyze_morphology_environment_correlation(
+            data, 'pressure_df', 'Pressure')
+        summary_results.extend(pressure_analysis)
+        
+        # Analyze velocity effects  
+        velocity_analysis = self.analyze_morphology_environment_correlation(
+            data, 'velocity_df2', 'Velocity')
+        summary_results.extend(velocity_analysis)
+        
+        # Format results
+        summary_text = f"Morphology-Environment Analysis ({len(data)} cells):\n\n"
+        summary_text += "\n".join(summary_results)
+        
+        # Show in dialog
+        QMessageBox.information(self, "Morphology Correlation Summary", summary_text)
+
+    def analyze_morphology_environment_correlation(self, data, env_col, env_label):
+        """Analyze correlation between environment and morphology classes"""
+        
+        import numpy as np
+        from scipy import stats
+        
+        results = []
+        
+        # Create high vs low environmental groups
+        median_val = data[env_col].median()
+        high_env = data[data[env_col] > median_val]
+        low_env = data[data[env_col] <= median_val]
+        
+        # Analyze each morphology class
+        morphology_classes = data['morphology_class'].unique()
+        
+        for morph_class in morphology_classes:
+            # Calculate proportions in high vs low groups
+            high_prop = (high_env['morphology_class'] == morph_class).mean() * 100
+            low_prop = (low_env['morphology_class'] == morph_class).mean() * 100
+            
+            # Statistical test (chi-square)
+            contingency_table = pd.crosstab(
+                data[env_col] > median_val, 
+                data['morphology_class'] == morph_class
+            )
+            
+            try:
+                chi2, p_value, _, _ = stats.chi2_contingency(contingency_table)
+                
+                results.append(
+                    f"{env_label} vs {morph_class}: "
+                    f"High {env_label}: {high_prop:.1f}%, "
+                    f"Low {env_label}: {low_prop:.1f}% "
+                    f"(p = {p_value:.3f})"
+                )
+            except:
+                results.append(
+                    f"{env_label} vs {morph_class}: "
+                    f"High {env_label}: {high_prop:.1f}%, "
+                    f"Low {env_label}: {low_prop:.1f}% "
+                    f"(statistical test failed)"
+                )
+        
+        return results
+    
+    
+    def show_correlation_summary(self, data):
+        """Show summary of correlation analysis results"""
+        
+        correlations = []
+        variables = [
+            ('pressure_df', 'aspect_ratio'),
+            ('pressure_df', 'circularity'), 
+            ('pressure_df', 'area_pixels'),
+            ('velocity_df2', 'aspect_ratio'),
+            ('velocity_df2', 'circularity'),
+            ('velocity_df2', 'area_pixels')
+        ]
+        
+        for env_var, morph_var in variables:
+            if env_var in data.columns and morph_var in data.columns:
+                clean_data = data[[env_var, morph_var]].dropna()
+                if len(clean_data) > 10:  # Need minimum data points
+                    corr = clean_data[env_var].corr(clean_data[morph_var])
+                    correlations.append(f"{env_var} vs {morph_var}: r = {corr:.3f}")
+        
+        summary_text = f"Analysis Summary ({len(data)} cells):\n" + "\n".join(correlations)
+        
+        QMessageBox.information(self, "Correlation Summary", summary_text)
+        
+    
+    
     
     def init_ui(self):
         """Initialize the dialog UI"""
@@ -242,11 +602,8 @@ class MotilityDialog(QDialog):
         self.tab_widget.currentChanged.connect(self.update_summary_visibility)
     
     def analyze_motility(self):
-        """Analyze cell motility"""
-        print("DEBUG: analyze_motility() method called")
-        
-        # Skip cursor change to avoid Qt threading issues
-        print("DEBUG: Skipping cursor change to avoid threading issues")
+        """Analyze cell motility - UPDATED"""
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         
         try:
             # Get current position and channel
@@ -276,48 +633,25 @@ class MotilityDialog(QDialog):
             print(f"Collected {len(all_cell_positions)} cell positions for visualization")
             
             # Calculate motility metrics
-            print("DEBUG: Starting motility analysis...")
-            print(f"DEBUG: tracked_cells type: {type(self.tracked_cells)}")
-            print(f"DEBUG: tracked_cells length: {len(self.tracked_cells) if self.tracked_cells else 0}")
+            self.motility_metrics = enhanced_motility_index(
+                self.tracked_cells, chamber_dimensions)
             
-            try:
-                print("DEBUG: Importing enhanced_motility_index...")
-                from tracking import enhanced_motility_index
-                print("DEBUG: Import successful")
-                
-                print("DEBUG: Calculating motility metrics...")
-                self.motility_metrics = enhanced_motility_index(
-                    self.tracked_cells, chamber_dimensions)
-                print("DEBUG: Motility metrics calculated successfully")
-                
-            except Exception as e:
-                print(f"DEBUG: Error in motility calculation: {e}")
-                raise
+            # Create visualizations
+            self.create_visualizations(chamber_dimensions, all_cell_positions)
             
-            try:
-                print("DEBUG: Creating visualizations...")
-                # Create visualizations
-                self.create_visualizations(chamber_dimensions, all_cell_positions)
-                print("DEBUG: Visualizations created successfully")
-                
-            except Exception as e:
-                print(f"DEBUG: Error in visualization: {e}")
-                raise
+            # ADD THIS LINE - Create density analysis
+            self.create_density_analysis()
             
-            try:
-                print("DEBUG: Updating summary...")
-                # Update summary
-                self.update_summary()
-                print("DEBUG: Summary updated successfully")
-                
-            except Exception as e:
-                print(f"DEBUG: Error in summary update: {e}")
-                raise
+            # Update summary
+            self.update_summary()
             
         except Exception as e:
             import traceback
             traceback.print_exc()
             QMessageBox.warning(self, "Error", f"Failed to analyze motility: {str(e)}")
+            
+        finally:
+            QApplication.restoreOverrideCursor()
     
     def collect_cell_positions(self, p, c):
         """Collect cell positions from segmentation cache or tracks"""
