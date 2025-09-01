@@ -654,11 +654,44 @@ class MotilityDialog(QDialog):
             QApplication.restoreOverrideCursor()
     
     def collect_cell_positions(self, p, c):
-        """Collect cell positions from segmentation cache or tracks"""
+        """Collect cell positions from MetricsService, tracks, or segmentation cache (in that order)"""
         all_cell_positions = []
         
-        # Try to use segmentation cache if available
-        if self.image_data and hasattr(self.image_data, 'segmentation_cache'):
+        # FIRST: Try to use existing MetricsService data (prevents re-segmentation)
+        try:
+            print(f"Trying to collect cell positions from MetricsService for position={p}, channel={c}")
+            
+            # Check if we have any data in MetricsService
+            if hasattr(self, 'metrics_service') and self.metrics_service:
+                # Get all available cell data for this position and channel
+                cell_data = self.metrics_service.get_cell_data(position=p, channel=c)
+                
+                if not cell_data.is_empty():
+                    print(f"Found {len(cell_data)} cells in MetricsService")
+                    # Extract centroid positions from the cell data
+                    for row in cell_data.to_pandas().itertuples():
+                        x, y = row.centroid_x, row.centroid_y
+                        all_cell_positions.append((x, y))
+                    print(f"Collected {len(all_cell_positions)} cell positions from MetricsService")
+                else:
+                    print("No cell data found in MetricsService")
+            else:
+                print("MetricsService not available")
+                
+        except Exception as e:
+            print(f"Error collecting from MetricsService: {str(e)}")
+        
+        # SECOND: Fall back to using tracks if MetricsService has no data
+        if not all_cell_positions:
+            print(f"Falling back to collecting positions from tracks")
+            for track in self.lineage_tracks:
+                if 'x' in track and 'y' in track:
+                    all_cell_positions.extend(list(zip(track['x'], track['y'])))
+            print(f"Collected {len(all_cell_positions)} cell positions from tracks")
+        
+        # THIRD: Only use segmentation cache as last resort (this can trigger re-segmentation)
+        if not all_cell_positions and self.image_data and hasattr(self.image_data, 'segmentation_cache'):
+            print("No data found in MetricsService or tracks, trying segmentation cache as last resort")
             try:
                 # Determine number of time frames
                 t_max = 20
@@ -680,16 +713,8 @@ class MotilityDialog(QDialog):
                         print(f"Error processing frame {t}: {str(frame_error)}")
                 
             except Exception as e:
-                print(f"Error collecting cell positions from segmentation: {str(e)}")
+                print(f"Error collecting cell positions from segmentation cache: {str(e)}")
                 all_cell_positions = []
-        
-        # Fall back to using tracks if needed
-        if not all_cell_positions:
-            print(f"Falling back to collecting positions from tracks")
-            for track in self.lineage_tracks:
-                if 'x' in track and 'y' in track:
-                    all_cell_positions.extend(list(zip(track['x'], track['y'])))
-            print(f"Collected {len(all_cell_positions)} cell positions from tracks")
         
         return all_cell_positions
     
