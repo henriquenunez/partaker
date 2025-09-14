@@ -355,7 +355,13 @@ class SegmentationModels:
             if SegmentationModels.OMNIPOSE_BACT_PHASE_AFFINITY not in self.models:
                 try:
                     from cellpose_omni import models as omnipose_models
-                    from omnipose.gpu import use_gpu
+                    try:
+                        from omnipose.gpu import use_gpu
+                    except ImportError:
+                        # Python 3.11 omnipose doesn't have use_gpu - create fallback
+                        import omnipose.gpu as gpu_mod
+                        def use_gpu():
+                            return hasattr(gpu_mod, 'torch_GPU') and gpu_mod.torch_GPU is not None and str(gpu_mod.torch_GPU) != 'cpu'
                     
                     # Check GPU availability for Omnipose
                     use_omnipose_gpu = use_gpu() if "PARTAKER_GPU" in os.environ and os.environ["PARTAKER_GPU"] == "1" else False
