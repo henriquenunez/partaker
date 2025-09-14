@@ -289,7 +289,9 @@ class SegmentationCache:
             if hasattr(self, 'binary_mask') and self.binary_mask is not None:
                 segmented_frame = self.apply_binary_mask(segmented_frame)
 
-            segmented_frame = self.remove_artifacts(segmented_frame)
+            # Skip artifact removal for Omnipose models - they have their own complete pipeline
+            if self.model_name != 'bact_phase_affinity':
+                segmented_frame = self.remove_artifacts(segmented_frame)
             mmap_array[idx] = segmented_frame
             indices.add(idx)
         except Exception as e:

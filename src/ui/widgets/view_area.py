@@ -483,8 +483,13 @@ class ViewAreaWidget(QWidget):
         try:
             # Convert to displayable format
             if mode == "segmented":
-                # Convert binary segmentation to 8-bit for display
-                display_image = (image > 0).astype(np.uint8) * 255
+                # For Omnipose, image is already perfect binary (0, 255), so use directly
+                if image.dtype == np.uint8 and set(np.unique(image)).issubset({0, 255}):
+                    display_image = image
+                else:
+                    # Convert binary segmentation to 8-bit for display
+                    display_image = (image > 0).astype(np.uint8) * 255
+                
                 # Convert to RGB for overlay support
                 display_image = cv2.cvtColor(display_image, cv2.COLOR_GRAY2RGB)
             else:
@@ -512,10 +517,12 @@ class ViewAreaWidget(QWidget):
             pixmap = QPixmap.fromImage(q_image)
             
             # Scale to fit the label while maintaining aspect ratio
+            # Use FastTransformation for segmented images to preserve binary values without smoothing
+            transformation = Qt.FastTransformation if mode == "segmented" else Qt.SmoothTransformation
             scaled_pixmap = pixmap.scaled(
                 self.image_label.size(),
                 Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
+                transformation
             )
             
             self.image_label.setPixmap(scaled_pixmap)

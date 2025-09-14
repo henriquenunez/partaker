@@ -398,8 +398,7 @@ class MetricsService:
 
         # Return True if we have any matching data
         return filtered.height > 0
-    
-    
+
     def add_colony_metrics(self, colony_metrics):
         """
         Add colony-level metrics to the data collection.

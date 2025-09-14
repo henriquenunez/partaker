@@ -18,6 +18,13 @@ from skimage import exposure
 from skimage.restoration import richardson_lucy
 from skimage.measure import label
 
+
+def enhance_brightness_contrast(img, alpha=1.8, beta=40):
+    """Brightness and contrast enhancement"""
+    img_uint8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    enhanced = cv2.convertScaleAbs(img_uint8, alpha=alpha, beta=beta)
+    return enhanced.astype(np.float32) / 255.0
+
 class SegmentationModels:
     CELLPOSE = 'cellpose'
     UNET = 'unet'
@@ -180,102 +187,91 @@ class SegmentationModels:
 
     def segment_omnipose(self, images, progress, omnipose_inst):
         """
-        Segment cells using Omnipose and return binary masks.
-
-        Parameters:
-        -----------
-        images : list of numpy.ndarray
-            The input images to segment.
-        progress : callable or Signal
-            A callback or signal to update progress.
-        omnipose_inst : cellpose_omni.models.CellposeModel
-            The Omnipose model instance.
-
-        Returns:
-        --------
-        binary_mask_display : numpy.ndarray
-            The binary masks for each segmented cell.
+        Exact notebook workflow transplanted
         """
-        
-        # Ensure images are in the correct format
+        # Ensure images are in correct format
         images = [img.squeeze() if img.ndim > 2 else img for img in images]
         
-        # Apply Omnipose-specific normalization
         try:
-            from cellpose_omni import transforms
             from omnipose.utils import normalize99
             
-            processed_images = []
-            for img in images:
-                # Move minimum dimension and convert to single channel if needed
-                img_proc = transforms.move_min_dim(img)
-                if len(img_proc.shape) > 2:
-                    img_proc = np.mean(img_proc, axis=-1)
-                # Apply normalize99 for optimal Omnipose performance
-                img_proc = normalize99(img_proc)
-                processed_images.append(img_proc)
-            
-            images = processed_images
-            
-        except ImportError:
-            print("Warning: cellpose_omni or omnipose not available, using standard preprocessing")
-            # Fallback to standard normalization
-            processed_images = []
+            # Step 1: Apply brightness/contrast enhancement to all images
+            enhanced_all = []
             for img in images:
                 if len(img.shape) > 2:
                     img = np.mean(img, axis=-1)
-                img_normalized = (img - np.min(img)) / (np.max(img) - np.min(img))
-                processed_images.append(img_normalized)
-            images = processed_images
-
-        try:
-            # Define Omnipose parameters optimized for bacterial cells
-            params = {
-                'channels': None,  # Auto-detect channels
-                'rescale': None,   # No rescaling
-                'mask_threshold': -2,  # Optimized for bacterial cells
-                'flow_threshold': 0,   # Default flow threshold
-                'transparency': True,
-                'omni': True,         # Enable Omnipose reconstruction
-                'cluster': True,      # Use DBSCAN clustering
-                'resample': True,     # Run dynamics on rescaled grid
-                'verbose': False,
-                'tile': False,
-                'niter': None,        # Auto-calculate iterations
-                'augment': False,
-                'affinity_seg': True  # Enable affinity segmentation
-            }
+                # Brightness/contrast enhancement
+                img_uint8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                enhanced = cv2.convertScaleAbs(img_uint8, alpha=1.8, beta=40)
+                enhanced = enhanced.astype(np.float32) / 255.0
+                # Then normalize99
+                enhanced = normalize99(enhanced)
+                enhanced_all.append(enhanced)
             
-            # Run segmentation with Omnipose
-            masks, _, _ = omnipose_inst.eval(images, **params)
+            # Step 2: Run segmentation with exact notebook parameters
+            masks, flows, styles = omnipose_inst.eval(enhanced_all,
+                                                    channels=None,
+                                                    rescale=None,
+                                                    mask_threshold=-2,
+                                                    flow_threshold=0,
+                                                    transparency=True,
+                                                    omni=True,
+                                                    cluster=True,
+                                                    resample=True,
+                                                    verbose=False,
+                                                    tile=False,
+                                                    niter=None,
+                                                    augment=False,
+                                                    affinity_seg=True)
+            
             masks = np.array(masks)
-
-            # Convert to binary masks for compatibility with existing pipeline
-            bw_images = np.where(masks > 0, 255, 0).astype(np.uint8)
-
-            # Add outlines (similar to cellpose processing)
-            from cellpose import utils
+            
+            # Step 3: Add padding around cells (exact notebook function)
+            def add_padding_notebook_style(masks_single, padding_size=3):
+                result = np.zeros_like(masks_single, dtype=np.uint8)
+                cell_ids = np.unique(masks_single[masks_single > 0])
+                
+                for cell_id in cell_ids:
+                    cell_mask = (masks_single == cell_id).astype(np.uint8)
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (padding_size*2+1, padding_size*2+1))
+                    eroded_cell = cv2.erode(cell_mask, kernel, iterations=1)
+                    result[eroded_cell > 0] = 255
+                
+                return result
+            
+            # Apply to all images
+            final_results = []
             for i in range(len(masks)):
-                outlines = utils.masks_to_outlines(masks[i])
-                bw_images[i][outlines] = 0  # Set outline pixels to black
-
-            # Pad binary masks for visualization
-            binary_mask_display = np.pad(bw_images, pad_width=(
-                (0, 0), (5, 5), (5, 5)), mode='constant', constant_values=0)
-
+                padded = add_padding_notebook_style(masks[i], padding_size=3)
+                final_results.append(padded)
+            
+            final_results = np.array(final_results)
+            
         except Exception as e:
             print(f"Error during Omnipose segmentation: {e}")
             return None
-
-        # Update progress if a callback is provided
+        
         if progress:
             if callable(progress):
                 progress(len(images))
             else:
                 progress.emit(len(images))
-
-        return binary_mask_display
-
+        
+        return final_results
+    
+    def add_padding_around_cells(self, masks, padding_size=3):
+        """Add black padding around each individual cell"""
+        result = np.zeros_like(masks, dtype=np.uint8)
+        cell_ids = np.unique(masks[masks > 0])
+        
+        for cell_id in cell_ids:
+            cell_mask = (masks == cell_id).astype(np.uint8)
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (padding_size*2+1, padding_size*2+1))
+            eroded_cell = cv2.erode(cell_mask, kernel, iterations=1)
+            result[eroded_cell > 0] = 255
+        
+        return result
+    
     def segment_images(
             self,
             images,
@@ -371,8 +367,22 @@ class SegmentationModels:
                 except ImportError as e:
                     raise ImportError(f"Omnipose not available. Please install with: pip install cellpose-omni omnipose. Error: {e}")
 
+            # Omnipose has its own complete pipeline - return directly without additional processing
             segmented_images = self.segment_omnipose(
                 images, progress, self.models[mode])
+            
+            # Resize to original shape if needed (Omnipose handles its own preprocessing)
+            if segmented_images is not None and len(segmented_images) > 0:
+                if segmented_images[0].shape != original_shape:
+                    segmented_images = [
+                        cv2.resize(
+                            segmented_image,
+                            (original_shape[1], original_shape[0]),
+                            interpolation=cv2.INTER_NEAREST
+                        ) for segmented_image in segmented_images
+                    ]
+            
+            return segmented_images
 
         else:
             raise ValueError(f"Invalid segmentation mode: {mode}")
