@@ -10,7 +10,11 @@ readme = "README.md"
 requires-python = ">=3.10,<3.12"
 dependencies = [
     "pyside6 (==6.7.2)",
-    "tensorflow-macos (==2.15)",
+    "tensorflow (>=2.13.0,<2.16.0) ; platform_system != 'Darwin' and platform_system != 'Windows'",
+    "tensorflow-macos (==2.15) ; platform_system == 'Darwin' and platform_machine == 'arm64'",
+    "tensorflow-intel (>=2.13.0,<2.16.0) ; platform_system == 'Windows'",
+    "tensorflow-io-gcs-filesystem (>=0.23.1) ; platform_machine != 'arm64' or platform_system != 'Darwin'",
+    "tensorflow-io-gcs-filesystem (<0.32.0) ; platform_system == 'Windows'",
     "polars (>=1.30.0,<2.0.0)",
     "nd2 (>=0.10.3,<0.11.0)",
     "opencv-python (>=4.11.0.86,<5.0.0.0)",
